@@ -1,0 +1,23 @@
+{
+  "name": "pool",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "node --loader ts-node/esm src/index.ts",
+    "start": "node --loader ts-node/esm src/index.ts",
+    "health-check": "node --loader ts-node/esm src/health-check.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.13",
+    "ts-node": "^10.9.2"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "playwright": "^1.53.1",
+    "redis": "^4.6.15",
+    "zod": "^4.0.5"
+  }
+}
