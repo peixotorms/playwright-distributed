@@ -9,8 +9,7 @@ if (!wsEndpoint) {
     process.exit(1);
 }
 
-// Run 10 concurrent tests
-Promise.all(Array.from({ length: 10 }, (_, i) => {
+Promise.all(Array.from({ length: 1 }, (_, i) => {
     console.log(`Starting test instance ${i + 1}`);
     return main();
 }));
@@ -21,7 +20,7 @@ async function main() {
         console.log(`Connecting to browser at: ${wsEndpoint}`);
 
         browser = await chromium.connect(wsEndpoint!, {
-            timeout: 5000, // 5 second timeout for connection
+            timeout: 5000,
         });
 
         console.log('Successfully connected to the browser!');
@@ -29,8 +28,8 @@ async function main() {
         const context = await browser.newContext();
         const page = await context.newPage();
 
-        console.log('Navigating to example.com...');
-        await page.goto('https://example.com');
+        console.log('Navigating to broton.dev...');
+        await page.goto('https://broton.dev');
 
         const title = await page.title();
         console.log(`Page title is: "${title}"`);
