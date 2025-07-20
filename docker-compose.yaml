@@ -4,23 +4,25 @@ services:
     ports:
       - "6379:6379"
 
-  worker:
+  proxy:
     build:
-      context: ./browser
+      context: ./proxy
       dockerfile: Dockerfile
     environment:
-      - PORT=3131
-      - HEADLESS=true
-      - HEARTBEAT_INTERVAL=15
-      - LOG_LEVEL=info
-      - REDIS_URL=redis://redis:6379
-      - DEBUG=pw:browser
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     ports:
-      - "3131:3131"
+      - "8080:8080"
+    depends_on:
+      - redis
 
-  # proxy:
-  #   build:
-  #     context: ./proxy
-  #     dockerfile: Dockerfile
-  #   ports:
-  #     - "3111:3111"
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PORT=3131
+      - PRIVATE_HOSTNAME=worker
+    depends_on:
+      - redis
