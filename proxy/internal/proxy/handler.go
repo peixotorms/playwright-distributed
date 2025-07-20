@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"errors"
 	"net"
 	"net/http"
@@ -11,9 +12,46 @@ import (
 	"proxy/pkg/logger"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+const (
+	maxRetries = 3
+	retryDelay = 500 * time.Millisecond
+)
+
+func selectWorkerWithRetry(ctx context.Context, rd *redis.Client) (redis.ServerInfo, error) {
+	var server redis.ServerInfo
+	var err error
+
+	for i := range maxRetries {
+		server, err = rd.SelectWorker(ctx)
+		if err == nil {
+			return server, nil
+		}
+
+		if !errors.Is(err, redis.ErrNoAvailableWorkers) {
+			return redis.ServerInfo{}, err
+		}
+
+		if i == maxRetries-1 {
+			break
+		}
+
+		logger.Debug("No workers available, retrying attempt %d/%d in %v...", i+1, maxRetries, retryDelay)
+
+		select {
+		case <-time.After(retryDelay):
+			continue
+		case <-ctx.Done():
+			return redis.ServerInfo{}, ctx.Err()
+		}
+	}
+
+	return redis.ServerInfo{}, err
+}
 
 func proxyHandler(rd *redis.Client) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -29,10 +67,24 @@ func proxyHandler(rd *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		server, err := rd.SelectWorker(r.Context())
+		server, err := selectWorkerWithRetry(r.Context(), rd)
 		if err != nil {
-			logger.Error("Connection from %s rejected. Failed to connect to browser server: %v", r.RemoteAddr, err)
-			httputils.ErrorResponse(w, http.StatusInternalServerError, "No available servers")
+			if errors.Is(err, redis.ErrNoAvailableWorkers) {
+				logger.Error(
+					"Connection from %s rejected. No workers available after %d retries: %v",
+					r.RemoteAddr,
+					maxRetries,
+					err,
+				)
+				httputils.ErrorResponse(w, http.StatusServiceUnavailable, "No available servers")
+			} else {
+				logger.Error(
+					"Connection from %s rejected. An unexpected error occurred while selecting a worker: %v",
+					r.RemoteAddr,
+					err,
+				)
+				httputils.ErrorResponse(w, http.StatusInternalServerError, "An internal error occurred")
+			}
 			return
 		}
 
