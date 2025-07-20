@@ -1,0 +1,26 @@
+services:
+  redis:
+    image: redis:8.0
+    ports:
+      - "6379:6379"
+
+  worker:
+    build:
+      context: ./browser
+      dockerfile: Dockerfile
+    environment:
+      - PORT=3131
+      - HEADLESS=true
+      - HEARTBEAT_INTERVAL=15
+      - LOG_LEVEL=info
+      - REDIS_URL=redis://redis:6379
+      - DEBUG=pw:browser
+    ports:
+      - "3131:3131"
+
+  # proxy:
+  #   build:
+  #     context: ./proxy
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "3111:3111"
