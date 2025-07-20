@@ -9,8 +9,8 @@ interface WorkerMetadata {
     id: string;
     endpoint: string;
     status: 'starting' | 'available' | 'recycling' | 'shutting-down';
-    startedAt: string; // ISO 8601
-    lastHeartbeat: string;
+    startedAt: number;
+    lastHeartbeat: number;
 }
 
 
@@ -23,6 +23,8 @@ class BrowserWorker {
     private heartbeatTimer: NodeJS.Timeout | null = null;
     private isShuttingDown: boolean = false;
     private redisKey: string;
+    private internalEndpoint: string | null = null;
+    private startedAt: number | null = null;
 
     constructor() {
         this.workerId = crypto.randomUUID();
@@ -83,14 +85,15 @@ class BrowserWorker {
             });
 
             const wsEndpoint = this.browserServer.wsEndpoint();
-            let internalEndpoint = wsEndpoint;
+            this.internalEndpoint = wsEndpoint;
             if (this.config.server.privateHostname) {
-                internalEndpoint = wsEndpoint.replace(/ws:\/\/127\.0\.0\.1|ws:\/\/localhost/, `ws://${this.config.server.privateHostname}`);
+                this.internalEndpoint = wsEndpoint.replace(/ws:\/\/127\.0\.0\.1|ws:\/\/localhost/, `ws://${this.config.server.privateHostname}`);
             }
 
-            this.logger.info('Browser server launched', { endpoint: internalEndpoint });
+            this.logger.info('Browser server launched', { endpoint: this.internalEndpoint });
 
-            await this.register(internalEndpoint);
+            await this.initializeCounters();
+            await this.register();
 
             this.startHeartbeat();
 
@@ -105,19 +108,48 @@ class BrowserWorker {
         }
     }
 
-    private async register(endpoint: string): Promise<void> {
+    private async initializeCounters(): Promise<void> {
+        this.logger.info('Initializing worker connection counters in Redis...');
+        try {
+            const [activeResult, lifetimeResult] = await Promise.all([
+                this.redis.hSetNX('cluster:active_connections', this.workerId, String(0)),
+                this.redis.hSetNX('cluster:lifetime_connections', this.workerId, String(0))
+            ]);
+
+            if (activeResult && lifetimeResult) {
+                this.logger.info('Successfully initialized connection counters.');
+            } else {
+                this.logger.info('Connection counters were already initialized for this worker.');
+            }
+        } catch (error) {
+            this.logger.error('Failed to initialize connection counters. Worker will not start.', { error: this.formatError(error) });
+            throw error;
+        }
+    }
+
+    private async register(): Promise<void> {
+        if (!this.internalEndpoint) {
+            this.logger.error('No endpoint available for registration. Aborting.');
+            await this.gracefulShutdown('registration_error_no_endpoint');
+            return;
+        }
+
+        if (!this.startedAt) {
+            this.startedAt = Date.now()
+        }
+
         const metadata: WorkerMetadata = {
             id: this.workerId,
-            endpoint,
+            endpoint: this.internalEndpoint,
             status: 'available',
-            startedAt: new Date().toISOString(),
-            lastHeartbeat: new Date().toISOString(),
+            startedAt: this.startedAt,
+            lastHeartbeat: Date.now()
         };
 
         await this.redis.hSet(this.redisKey, metadata as unknown as Record<string, string>);
         await this.redis.expire(this.redisKey, this.config.redis.keyTtl);
 
-        this.logger.info('Worker registered in Redis', { key: this.redisKey, endpoint });
+        this.logger.info('Worker registered in Redis', { key: this.redisKey, endpoint: this.internalEndpoint });
     }
 
     private startHeartbeat(): void {
@@ -132,6 +164,13 @@ class BrowserWorker {
         if (this.isShuttingDown) return;
 
         try {
+            const exists = await this.redis.exists(this.redisKey);
+            if (!exists) {
+                this.logger.warn('Worker key expired. Re-registering...');
+                await this.register();
+                return;
+            }
+
             const status = await this.redis.hGet(this.redisKey, 'status');
 
             if (status === 'recycling') {
@@ -140,7 +179,7 @@ class BrowserWorker {
                 return;
             }
 
-            await this.redis.hSet(this.redisKey, 'lastHeartbeat', new Date().toISOString());
+            await this.redis.hSet(this.redisKey, 'lastHeartbeat', Date.now());
             await this.redis.expire(this.redisKey, this.config.redis.keyTtl);
 
             this.logger.info('Heartbeat sent', { key: this.redisKey });
@@ -164,8 +203,11 @@ class BrowserWorker {
 
         try {
             this.logger.info('Updating worker status to "shutting-down" in Redis.');
-            await this.redis.hSet(this.redisKey, 'status', 'shutting-down');
-            await this.redis.expire(this.redisKey, 10);
+            const exists = await this.redis.exists(this.redisKey);
+            if (exists) {
+                await this.redis.hSet(this.redisKey, 'status', 'shutting-down');
+                await this.redis.expire(this.redisKey, 10);
+            }
         } catch (error) {
             this.logger.error('Failed to update worker status during shutdown.', { error: this.formatError(error) });
         }
