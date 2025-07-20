@@ -2,17 +2,31 @@ package redis
 
 import (
 	"context"
+	_ "embed"
+	"errors"
 	"fmt"
 	"proxy/pkg/config"
 	"proxy/pkg/logger"
+	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
+const (
+	activeConnectionsKey   = "cluster:active_connections"
+	lifetimeConnectionsKey = "cluster:lifetime_connections"
+)
+
+//go:embed selector.lua
+var selectorScriptSource string
+
+var ErrNoAvailableWorkers = errors.New("no available workers")
+
 type Client struct {
-	rd  *redis.Client
-	cfg *config.Config
+	rd             *redis.Client
+	cfg            *config.Config
+	selectorScript *redis.Script
 }
 
 func NewClient(cfg *config.Config) (*Client, error) {
@@ -29,9 +43,12 @@ func NewClient(cfg *config.Config) (*Client, error) {
 
 	logger.Info("Connected to Redis")
 
+	selector := redis.NewScript(selectorScriptSource)
+
 	return &Client{
-		rd:  rd,
-		cfg: cfg,
+		rd:             rd,
+		cfg:            cfg,
+		selectorScript: selector,
 	}, nil
 }
 
@@ -47,45 +64,94 @@ type ServerInfo struct {
 	LastHeartbeat string `redis:"lastHeartbeat"`
 }
 
-func (c *Client) GetAvailableServers(ctx context.Context) ([]ServerInfo, error) {
-	var cursor uint64
-	var err error
-	var keys []string
+func (c *Client) GetAllActiveConnections(ctx context.Context) (map[string]int64, error) {
+	result := make(map[string]int64)
 
-	for {
-		var batch []string
-		batch, cursor, err = c.rd.Scan(ctx, cursor, "worker:*", 100).Result()
-		if err != nil {
-			return nil, fmt.Errorf("error while getting available servers: %w", err)
-		}
-		keys = append(keys, batch...)
-		if cursor == 0 {
-			break
-		}
+	vals, err := c.rd.HGetAll(ctx, activeConnectionsKey).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get all active connections: %w", err)
 	}
 
-	servers := make([]ServerInfo, 0, len(keys))
-
-	for _, key := range keys {
-		status, err := c.rd.HGet(ctx, key, "status").Result()
+	for workerId, val := range vals {
+		count, err := strconv.ParseInt(val, 10, 64)
 		if err != nil {
+			logger.WithField("workerId", workerId).Errorf("Failed to parse active connections count: %v", err)
 			continue
 		}
-
-		if status != "available" {
-			continue
-		}
-
-		var server ServerInfo
-		if err := c.rd.HGetAll(ctx, key).Scan(&server); err != nil {
-			logger.WithField("key", key).Errorf("Failed to get or scan server info: %v", err)
-			continue
-		}
-
-		servers = append(servers, server)
+		result[workerId] = count
 	}
 
-	logger.Info(fmt.Sprintf("Available %d/%d registered servers", len(servers), len(keys)))
+	return result, nil
+}
 
-	return servers, nil
+func (c *Client) GetWorkerActiveConnections(ctx context.Context, workerId string) (int64, error) {
+	val, err := c.rd.HGet(ctx, activeConnectionsKey, workerId).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	} else if err != nil {
+		return 0, fmt.Errorf("failed to get active connections for worker %s: %w", workerId, err)
+	}
+
+	return val, nil
+}
+
+func (c *Client) GetLifetimeConnections(ctx context.Context, workerId string) (int64, error) {
+	val, err := c.rd.HGet(ctx, lifetimeConnectionsKey, workerId).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	} else if err != nil {
+		return 0, fmt.Errorf("failed to get lifetime connections for worker %s: %w", workerId, err)
+	}
+
+	return val, nil
+}
+
+func (c *Client) ModifyActiveConnections(ctx context.Context, workerId string, delta int64) error {
+	err := c.rd.HIncrBy(ctx, activeConnectionsKey, workerId, int64(delta)).Err()
+	if err != nil {
+		return fmt.Errorf("failed to modify active connections for worker %s: %w", workerId, err)
+	}
+
+	return nil
+}
+
+func (c *Client) ModifyLifetimeConnections(ctx context.Context, workerId string, delta int64) error {
+	err := c.rd.HIncrBy(ctx, lifetimeConnectionsKey, workerId, int64(delta)).Err()
+	if err != nil {
+		return fmt.Errorf("failed to modify lifetime connections for worker %s: %w", workerId, err)
+	}
+
+	return nil
+}
+
+func (c *Client) GetWorker(ctx context.Context, workerId string) (ServerInfo, error) {
+	workerKey := fmt.Sprintf("worker:%s", workerId)
+	var serverInfo ServerInfo
+
+	if err := c.rd.HGetAll(ctx, workerKey).Scan(&serverInfo); err != nil {
+		return ServerInfo{}, fmt.Errorf("failed to get worker %s: %w", workerId, err)
+	}
+
+	if serverInfo.ID == "" {
+		return ServerInfo{}, fmt.Errorf("worker %s not found", workerId)
+	}
+
+	return serverInfo, nil
+}
+
+func (c *Client) SelectWorker(ctx context.Context) (ServerInfo, error) {
+	result, err := c.selectorScript.Run(ctx, c.rd, []string{}).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return ServerInfo{}, ErrNoAvailableWorkers
+		}
+		return ServerInfo{}, fmt.Errorf("failed to run selector script: %w", err)
+	}
+
+	workerId, ok := result.(string)
+	if !ok {
+		return ServerInfo{}, fmt.Errorf("selector script returned unexpected type: %T", result)
+	}
+
+	return c.GetWorker(ctx, workerId)
 }
