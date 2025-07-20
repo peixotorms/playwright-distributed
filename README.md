@@ -82,6 +82,8 @@ async def main():
 asyncio.run(main())
 ```
 
+> These are just two samples — **any Playwright-compatible client (Java, .NET, Go, Rust, etc.) can connect to the same `ws://localhost:8080` endpoint.**
+
 ---
 ## Architecture
 
