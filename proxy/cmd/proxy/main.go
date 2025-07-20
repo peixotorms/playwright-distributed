@@ -1,14 +1,12 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"proxy/internal/proxy"
 	"proxy/internal/redis"
 	"proxy/pkg/config"
 	"proxy/pkg/logger"
-	"time"
 )
 
 func main() {
@@ -27,14 +25,5 @@ func main() {
 	}
 	defer rd.Close()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err = rd.GetAvailableServers(ctx)
-	if err != nil {
-		fmt.Printf("error: %v", err)
-		os.Exit(1)
-	}
-
-	proxy.StartProxyServer()
+	proxy.StartProxyServer(rd)
 }
