@@ -166,7 +166,6 @@ func relay(src, dst *websocket.Conn, direction string) {
 			return
 		}
 
-		logger.Info("\n\n===== %s\n%s\n\n", direction, message)
 		logger.Debug("Relayed %s->%s: %d bytes", srcAddr, dstAddr, len(message))
 	}
 }
