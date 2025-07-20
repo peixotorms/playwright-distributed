@@ -13,9 +13,7 @@ A self-hosted, **distributed browser pool** powered by [Playwright](https://play
 $ git clone https://github.com/your_org/playwright-distributed.git
 $ cd playwright-distributed
 $ docker compose up -d   # brings up proxy, 1 worker, Redis
-
-# 3. Grab a browser
-#   ws://localhost:8080 is now your Playwright endpoint
+# Now, grab a browser: ws://localhost:8080 is now your Playwright endpoint
 ```
 Stop it with `docker compose down`.
 
