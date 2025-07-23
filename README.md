@@ -89,15 +89,25 @@ asyncio.run(main())
 
 ```mermaid
 flowchart TD
-    Client[(Your playwright code)] -->|WebSocket| Proxy
-    Proxy <-->|select worker| Redis[(Redis)]
-    subgraph Workers
-        Worker1(Worker)
-        Worker2(Worker)
-        WorkerN(...)
+    Client[(Your Playwright code)] -->|WebSocket| Proxy
+
+    subgraph playwright-distributed
+        direction LR
+
+        Proxy -->|select worker| Redis[(Redis)]
+        Proxy <--> workerGroup
+
+        subgraph workerGroup [Workers]
+            direction LR
+            Worker1(Worker)
+            Worker2(Worker)
+            WorkerN(...)
+        end
+
+        Worker1 --> Redis
+        Worker2 --> Redis
+        WorkerN --> Redis
     end
-    Proxy --> Workers
-    Workers --> Redis
 ```
 
 Components:
