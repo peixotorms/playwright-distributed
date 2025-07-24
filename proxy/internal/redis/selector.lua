@@ -1,7 +1,6 @@
--- Selects the least-loaded available worker atomically.
--- Uses HGETALL for bulk active/lifetime fetch.
--- Filters where status == "available", active < max_concurrent_sessions, lifetime < max_lifetime_sessions, and lastHeartbeat is recent.
--- Increments active and lifetime by 1 for the selected worker.
+-- Selects the best available worker using a lifetime-first strategy.
+-- This prevents multiple workers from reaching their session limit simultaneously
+-- by preferring workers with higher lifetime connections, thus staggering restarts.
 -- Returns the selected worker UUID or nil if none available.
 
 local max_concurrent_sessions = tonumber(ARGV[1])
@@ -14,11 +13,8 @@ local time = redis.call('TIME')
 local now_ms = tonumber(time[1]) * 1000 + math.floor(tonumber(time[2]) / 1000)
 local threshold = now_ms - (60 * 1000)
 
--- Bulk fetch all active and lifetime data
 local active_data = redis.call('HGETALL', active_hash)
 local lifetime_data = redis.call('HGETALL', lifetime_hash)
-
--- Convert to maps (UUID -> count)
 local active_map = {}
 local lifetime_map = {}
 for i = 1, #active_data, 2 do
@@ -30,11 +26,27 @@ for i = 1, #lifetime_data, 2 do
     lifetime_map[uuid] = tonumber(lifetime_data[i+1] or 0)
 end
 
-local candidates = {}
+if next(active_map) == nil then
+    return nil
+end
+local total_workers = 0
+for uuid, active in pairs(active_map) do
+    total_workers = total_workers + 1
+end
+
+local margin = math.max(1, math.floor(max_lifetime_sessions / total_workers))
+local best_uuid = nil
+local best_lifetime = -1
+local best_active = math.huge
+local fallback_uuid = nil
+local fallback_lifetime = -1
+local fallback_active = math.huge
+
 for uuid, active in pairs(active_map) do
     local worker_key = 'worker:' .. uuid
-    local status = redis.call('HGET', worker_key, 'status')
-    local lastHeartbeat_str = redis.call('HGET', worker_key, 'lastHeartbeat')
+    local worker_fields = redis.call('HMGET', worker_key, 'status', 'lastHeartbeat')
+    local status = worker_fields[1]
+    local lastHeartbeat_str = worker_fields[2]
     
     local lifetime = lifetime_map[uuid] or 0
 
@@ -47,22 +59,28 @@ for uuid, active in pairs(active_map) do
     end
     
     if status == 'available' and active < max_concurrent_sessions and lifetime < max_lifetime_sessions and is_recent then
-        table.insert(candidates, {uuid = uuid, active = active, worker_key = worker_key})
+        if lifetime < (max_lifetime_sessions - margin) then
+            if lifetime > best_lifetime or (lifetime == best_lifetime and active < best_active) then
+                best_uuid = uuid
+                best_lifetime = lifetime
+                best_active = active
+            end
+        end
+        
+        if (lifetime + 1) <= max_lifetime_sessions and (lifetime > fallback_lifetime or (lifetime == fallback_lifetime and active < fallback_active)) then
+            fallback_uuid = uuid
+            fallback_lifetime = lifetime
+            fallback_active = active
+        end
     end
 end
 
-if #candidates == 0 then
+local selected_uuid = best_uuid or fallback_uuid
+
+if not selected_uuid then
     return nil
 end
 
--- Sort candidates by active connections (ascending)
-table.sort(candidates, function(a, b) return a.active < b.active end)
-
-local selected = candidates[1]
-local selected_uuid = selected.uuid
-local selected_worker_key = selected.worker_key
-
--- Increment counters
 redis.call('HINCRBY', active_hash, selected_uuid, 1)
 redis.call('HINCRBY', lifetime_hash, selected_uuid, 1)
 
