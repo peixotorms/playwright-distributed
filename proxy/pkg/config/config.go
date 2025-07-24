@@ -15,6 +15,7 @@ type Config struct {
 	MaxLifetimeSessions   int    `mapstructure:"MAX_LIFETIME_SESSIONS"`
 	ReaperRunInterval     int    `mapstructure:"REAPER_RUN_INTERVAL"`
 	ShutdownCommandTTL    int    `mapstructure:"SHUTDOWN_COMMAND_TTL"`
+	WorkerSelectTimeout   int    `mapstructure:"WORKER_SELECT_TIMEOUT"`
 	LogLevel              string `mapstructure:"LOG_LEVEL"`
 	LogFormat             string `mapstructure:"LOG_FORMAT"`
 }
@@ -33,11 +34,13 @@ func LoadConfig() (*Config, error) {
 	viper.BindEnv("MAX_LIFETIME_SESSIONS")
 	viper.BindEnv("REAPER_RUN_INTERVAL")
 	viper.BindEnv("SHUTDOWN_COMMAND_TTL")
+	viper.BindEnv("WORKER_SELECT_TIMEOUT")
 
 	viper.SetDefault("MAX_CONCURRENT_SESSIONS", 5)
 	viper.SetDefault("MAX_LIFETIME_SESSIONS", 50)
 	viper.SetDefault("REAPER_RUN_INTERVAL", 300)
 	viper.SetDefault("SHUTDOWN_COMMAND_TTL", 60)
+	viper.SetDefault("WORKER_SELECT_TIMEOUT", 5)
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {

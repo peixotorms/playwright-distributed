@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"proxy/internal/models"
 	"proxy/internal/redis"
+	"proxy/pkg/config"
 	"proxy/pkg/httputils"
 	"proxy/pkg/logger"
 	"sync"
@@ -18,16 +19,18 @@ import (
 )
 
 const (
-	maxRetries = 3
 	retryDelay = 500 * time.Millisecond
 )
 
-func selectWorkerWithRetry(ctx context.Context, rd *redis.Client) (redis.ServerInfo, error) {
-	var server redis.ServerInfo
-	var err error
+func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.Duration) (redis.ServerInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
-	for i := range maxRetries {
-		server, err = rd.SelectWorker(ctx)
+	ticker := time.NewTicker(retryDelay)
+	defer ticker.Stop()
+
+	for {
+		server, err := rd.SelectWorker(ctx)
 		if err == nil {
 			return server, nil
 		}
@@ -36,24 +39,16 @@ func selectWorkerWithRetry(ctx context.Context, rd *redis.Client) (redis.ServerI
 			return redis.ServerInfo{}, err
 		}
 
-		if i == maxRetries-1 {
-			break
-		}
-
-		logger.Debug("No workers available, retrying attempt %d/%d in %v...", i+1, maxRetries, retryDelay)
-
 		select {
-		case <-time.After(retryDelay):
+		case <-ticker.C:
 			continue
 		case <-ctx.Done():
-			return redis.ServerInfo{}, ctx.Err()
+			return redis.ServerInfo{}, redis.ErrNoAvailableWorkers
 		}
 	}
-
-	return redis.ServerInfo{}, err
 }
 
-func proxyHandler(rd *redis.Client) http.HandlerFunc {
+func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
@@ -67,13 +62,14 @@ func proxyHandler(rd *redis.Client) http.HandlerFunc {
 			return
 		}
 
-		server, err := selectWorkerWithRetry(r.Context(), rd)
+		timeout := time.Duration(cfg.WorkerSelectTimeout) * time.Second
+		server, err := selectWorkerWithRetry(r.Context(), rd, timeout)
 		if err != nil {
 			if errors.Is(err, redis.ErrNoAvailableWorkers) {
 				logger.Error(
-					"Connection from %s rejected. No workers available after %d retries: %v",
+					"Connection from %s rejected. No workers available after %v timeout: %v",
 					r.RemoteAddr,
-					maxRetries,
+					timeout,
 					err,
 				)
 				httputils.ErrorResponse(w, http.StatusServiceUnavailable, "No available servers")

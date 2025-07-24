@@ -36,7 +36,7 @@ func StartProxyServer(cfg *config.Config, rd *redis.Client) {
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
-	mux.HandleFunc("/", proxyHandler(rd))
+	mux.HandleFunc("/", proxyHandler(rd, cfg))
 
 	server := &http.Server{
 		Addr:         ":8080",

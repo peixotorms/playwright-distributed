@@ -12,6 +12,7 @@ This document outlines the critical time-based configurations in the system and 
 | Worker Drain Timeout | `worker/src/index.ts` | 30s | - | Safety net to force-kill a stuck draining worker. |
 | Reaper Stale Threshold | `proxy/internal/redis/reaper.lua` | 30s | Worker Heartbeat | Must be > Heartbeat Interval. Recommended: 3x. |
 | Reaper Run Interval | `proxy/pkg/config/config.go` | 300s (5m) | - | How often the proxy checks for dead workers. |
+| Worker Select Timeout | `proxy/pkg/config/config.go` | 5s | HTTP WriteTimeout | Must be < WriteTimeout. Controls how long to wait for workers. |
 
 ---
 
@@ -57,4 +58,13 @@ This document outlines the critical time-based configurations in the system and 
 - **Purpose**: How often the reaper process runs to find and clean up stale workers.
 - **File**: `proxy/pkg/config/config.go` (`REAPER_RUN_INTERVAL`)
 - **Default**: `300` (300 seconds, or 5 minutes)
-- **Dependencies**: Should ideally be greater than the `Reaper Stale Threshold` to avoid running unnecessarily, but it's not a strict dependency. 
+- **Dependencies**: Should ideally be greater than the `Reaper Stale Threshold` to avoid running unnecessarily, but it's not a strict dependency.
+
+### 7. Worker Select Timeout
+- **Purpose**: The maximum time the proxy will wait for an available worker before giving up and returning a 503 error to the client.
+- **File**: `proxy/pkg/config/config.go` (`WORKER_SELECT_TIMEOUT`)
+- **Default**: `5` (5 seconds)
+- **Dependency Rule**: `Worker Select Timeout` **must** be less than `HTTP WriteTimeout`.
+- **Rationale**: The proxy needs to be able to write a timeout response to the client. If the worker selection timeout is longer than the HTTP write timeout, the connection will be closed before a response can be sent.
+- **Recommendation**: Set `Worker Select Timeout` to be at most **80%** of the `HTTP WriteTimeout` (currently 15s in `proxy/internal/proxy/server.go`).
+- **Note**: This timeout only applies to the HTTP upgrade phase. Once a WebSocket connection is established, this timeout no longer applies. 
