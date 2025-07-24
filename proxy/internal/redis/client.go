@@ -21,12 +21,16 @@ const (
 //go:embed selector.lua
 var selectorScriptSource string
 
+//go:embed reaper.lua
+var reaperScriptSource string
+
 var ErrNoAvailableWorkers = errors.New("no available workers")
 
 type Client struct {
 	rd             *redis.Client
 	cfg            *config.Config
 	selectorScript *redis.Script
+	reaperScript   *redis.Script
 }
 
 func NewClient(cfg *config.Config) (*Client, error) {
@@ -44,11 +48,13 @@ func NewClient(cfg *config.Config) (*Client, error) {
 	logger.Info("Connected to Redis")
 
 	selector := redis.NewScript(selectorScriptSource)
+	reaper := redis.NewScript(reaperScriptSource)
 
 	return &Client{
 		rd:             rd,
 		cfg:            cfg,
 		selectorScript: selector,
+		reaperScript:   reaper,
 	}, nil
 }
 
@@ -106,6 +112,33 @@ func (c *Client) GetLifetimeConnections(ctx context.Context, workerId string) (i
 	return val, nil
 }
 
+func (c *Client) TriggerWorkerShutdownIfNeeded(ctx context.Context, workerID string) {
+	currentLifetime, err := c.GetLifetimeConnections(ctx, workerID)
+	if err != nil {
+		logger.WithField("workerId", workerID).Errorf("Could not get lifetime connections: %v", err)
+		return
+	}
+
+	if currentLifetime < int64(c.cfg.MaxLifetimeSessions) {
+		return
+	}
+
+	cmdKey := fmt.Sprintf("worker:cmd:%s", workerID)
+	wasSet, err := c.rd.SetNX(ctx, cmdKey, "shutdown", time.Duration(c.cfg.ShutdownCommandTTL)*time.Second).Result()
+	if err != nil {
+		logger.WithField("workerId", workerID).Errorf("Failed to set shutdown command: %v", err)
+		return
+	}
+
+	if wasSet {
+		logger.WithField("workerId", workerID).Infof(
+			"Worker has reached session limit (%d/%d). Shutdown command sent.",
+			currentLifetime,
+			c.cfg.MaxLifetimeSessions,
+		)
+	}
+}
+
 func (c *Client) ModifyActiveConnections(ctx context.Context, workerId string, delta int64) error {
 	err := c.rd.HIncrBy(ctx, activeConnectionsKey, workerId, int64(delta)).Err()
 	if err != nil {
@@ -140,7 +173,13 @@ func (c *Client) GetWorker(ctx context.Context, workerId string) (ServerInfo, er
 }
 
 func (c *Client) SelectWorker(ctx context.Context) (ServerInfo, error) {
-	result, err := c.selectorScript.Run(ctx, c.rd, []string{}).Result()
+	result, err := c.selectorScript.Run(
+		ctx,
+		c.rd,
+		[]string{},
+		c.cfg.MaxConcurrentSessions,
+		c.cfg.MaxLifetimeSessions,
+	).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return ServerInfo{}, ErrNoAvailableWorkers
@@ -154,4 +193,42 @@ func (c *Client) SelectWorker(ctx context.Context) (ServerInfo, error) {
 	}
 
 	return c.GetWorker(ctx, workerId)
+}
+
+func (c *Client) ReapStaleWorkers(ctx context.Context) (int, error) {
+	workerIDs, err := c.rd.HKeys(ctx, lifetimeConnectionsKey).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to get worker IDs from lifetime connections: %w", err)
+	}
+
+	if len(workerIDs) == 0 {
+		return 0, nil
+	}
+
+	args := make([]any, len(workerIDs))
+	for i, v := range workerIDs {
+		args[i] = v
+	}
+
+	result, err := c.reaperScript.Run(ctx, c.rd, []string{activeConnectionsKey, lifetimeConnectionsKey}, args...).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("failed to run reaper script: %w", err)
+	}
+
+	reapedIDs, ok := result.([]any)
+	if !ok {
+		return 0, fmt.Errorf("reaper script returned unexpected type: %T", result)
+	}
+
+	if len(reapedIDs) > 0 {
+		logger.Info("Reaped %d stale worker(s): %v", len(reapedIDs), reapedIDs)
+	}
+
+	return len(reapedIDs), nil
 }

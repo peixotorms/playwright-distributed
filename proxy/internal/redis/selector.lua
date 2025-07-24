@@ -1,11 +1,11 @@
 -- Selects the least-loaded available worker atomically.
 -- Uses HGETALL for bulk active/lifetime fetch.
--- Filters where status == "available", active < 5, lifetime < 50, and lastHeartbeat is recent.
+-- Filters where status == "available", active < max_concurrent_sessions, lifetime < max_lifetime_sessions, and lastHeartbeat is recent.
 -- Increments active and lifetime by 1 for the selected worker.
 -- Returns the selected worker UUID or nil if none available.
 
-local max_concurrent_sessions = 5
-local max_lifetime_sessions = 50
+local max_concurrent_sessions = tonumber(ARGV[1])
+local max_lifetime_sessions = tonumber(ARGV[2])
 
 local active_hash = 'cluster:active_connections'
 local lifetime_hash = 'cluster:lifetime_connections'

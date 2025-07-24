@@ -88,6 +88,8 @@ func proxyHandler(rd *redis.Client) http.HandlerFunc {
 			return
 		}
 
+		go rd.TriggerWorkerShutdownIfNeeded(r.Context(), server.ID)
+
 		backendURL, _ := url.Parse(server.Endpoint)
 		serverConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)
 		if err != nil {

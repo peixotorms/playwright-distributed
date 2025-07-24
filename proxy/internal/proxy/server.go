@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"context"
 	"net/http"
 	"proxy/internal/models"
 	"proxy/internal/redis"
+	"proxy/pkg/config"
 	"proxy/pkg/httputils"
 	"proxy/pkg/logger"
 	"sync/atomic"
@@ -28,7 +30,7 @@ func metricsHandler(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func StartProxyServer(rd *redis.Client) {
+func StartProxyServer(cfg *config.Config, rd *redis.Client) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", metricsHandler)
 	mux.HandleFunc("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
@@ -43,6 +45,24 @@ func StartProxyServer(rd *redis.Client) {
 		IdleTimeout:  60 * time.Second,
 		Handler:      mux,
 	}
+
+	go func() {
+		ticker := time.NewTicker(time.Duration(cfg.ReaperRunInterval) * time.Second)
+		defer ticker.Stop()
+
+		for range ticker.C {
+			logger.Debug("Running reaper to clean up stale workers...")
+			reapedCount, err := rd.ReapStaleWorkers(context.Background())
+			if err != nil {
+				logger.Error("Reaper error: %v", err)
+			}
+			if reapedCount > 0 {
+				logger.Info("Reaper cleaned up %d stale worker(s)", reapedCount)
+			} else {
+				logger.Debug("Reaper found no stale workers to clean up.")
+			}
+		}
+	}()
 
 	go func() {
 		ticker := time.NewTicker(60 * time.Second)

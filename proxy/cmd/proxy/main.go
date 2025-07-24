@@ -25,5 +25,5 @@ func main() {
 	}
 	defer rd.Close()
 
-	proxy.StartProxyServer(rd)
+	proxy.StartProxyServer(cfg, rd)
 }

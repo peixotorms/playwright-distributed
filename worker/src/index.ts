@@ -8,23 +8,32 @@ import { Logger } from './logger.js';
 interface WorkerMetadata {
     id: string;
     endpoint: string;
-    status: 'starting' | 'available' | 'recycling' | 'shutting-down';
+    status: 'available' | 'draining' | 'shutting-down';
     startedAt: number;
     lastHeartbeat: number;
 }
 
 
 class BrowserWorker {
-    private workerId: string;
-    private config: WorkerConfig;
-    private redis: RedisClientType;
-    private logger: Logger;
+    private readonly workerId: string;
+    private readonly config: WorkerConfig;
+    private readonly logger: Logger;
     private browserServer: BrowserServer | null = null;
-    private heartbeatTimer: NodeJS.Timeout | null = null;
+
+    private readonly redis: RedisClientType;
+    private readonly redisKey: string;
+    private readonly redisCmdKey: string;
+
+    // State
     private isShuttingDown: boolean = false;
-    private redisKey: string;
+    private isDraining: boolean = false;
     private internalEndpoint: string | null = null;
     private startedAt: number | null = null;
+
+    // Timers
+    private heartbeatTimer: NodeJS.Timeout | null = null;
+    private drainTimer: NodeJS.Timeout | null = null;
+    private drainTimeout: NodeJS.Timeout | null = null;
 
     constructor() {
         this.workerId = crypto.randomUUID();
@@ -32,6 +41,7 @@ class BrowserWorker {
         this.logger = new Logger(this.workerId, this.config.logging.level);
         this.redis = createClient({ url: this.config.redis.url });
         this.redisKey = `worker:${this.workerId}`;
+        this.redisCmdKey = `worker:cmd:${this.workerId}`;
     }
 
     private formatError(error: unknown): Record<string, any> {
@@ -171,18 +181,22 @@ class BrowserWorker {
                 return;
             }
 
-            const status = await this.redis.hGet(this.redisKey, 'status');
-
-            if (status === 'recycling') {
-                this.logger.info('Recycle command received from Hub. Initiating shutdown.');
-                await this.gracefulShutdown('recycle_command');
-                return;
-            }
-
             await this.redis.hSet(this.redisKey, 'lastHeartbeat', Date.now());
             await this.redis.expire(this.redisKey, this.config.redis.keyTtl);
-
             this.logger.info('Heartbeat sent', { key: this.redisKey });
+
+
+            if (this.isDraining) {
+                return
+            }
+
+            const command = await this.redis.get(this.redisCmdKey);
+            if (command === 'shutdown') {
+                this.logger.info('Shutdown command received. Initiating drain...');
+                await this.redis.del(this.redisCmdKey);
+                await this.drainAndShutdown('shutdown_command');
+                return;
+            }
 
         } catch (error) {
             this.logger.error('Failed to perform heartbeat', { error: this.formatError(error) });
@@ -190,15 +204,80 @@ class BrowserWorker {
         }
     }
 
+    private async drainAndShutdown(initiator: string): Promise<void> {
+        if (this.isDraining || this.isShuttingDown) {
+            return;
+        }
+
+        this.isDraining = true;
+        this.logger.info('Starting drain process...', { initiator });
+
+        try {
+            await this.redis.hSet(this.redisKey, 'status', 'draining');
+        } catch (error) {
+            this.logger.error('Failed to update worker status to draining', { error: this.formatError(error) });
+        }
+
+        this.drainTimeout = setTimeout(() => {
+            this.logger.warn('Drain timeout reached. Forcing shutdown.');
+            this.gracefulShutdown('drain_timeout');
+        }, 5 * 60 * 1000);
+
+        this.drainTimer = setInterval(async () => {
+            try {
+                const activeConnections = await this.redis.hGet('cluster:active_connections', this.workerId);
+                const count = activeConnections ? parseInt(activeConnections, 10) : 0;
+
+                if (!Number.isFinite(count) || count < 0) {
+                    this.logger.warn('Invalid connection count from Redis, treating as 0', { rawValue: activeConnections });
+                    if (this.drainTimeout) {
+                        clearTimeout(this.drainTimeout);
+                        this.drainTimeout = null;
+                    }
+                    this.logger.info('Invalid connection count detected. Proceeding with shutdown.');
+                    await this.gracefulShutdown('drain_invalid_count');
+                    return;
+                }
+
+                this.logger.info(`Draining... ${count} active connections remaining.`);
+
+                if (count === 0) {
+                    if (this.drainTimeout) {
+                        clearTimeout(this.drainTimeout);
+                        this.drainTimeout = null;
+                    }
+                    this.logger.info('No active connections remaining. Proceeding with shutdown.');
+                    await this.gracefulShutdown('drain_complete');
+                }
+            } catch (error) {
+                this.logger.error('Error checking active connections during drain', { error: this.formatError(error) });
+                if (this.drainTimeout) {
+                    clearTimeout(this.drainTimeout);
+                    this.drainTimeout = null;
+                }
+                await this.gracefulShutdown('drain_error');
+            }
+        }, 5000);
+    }
+
     private async gracefulShutdown(initiator: string): Promise<void> {
         if (this.isShuttingDown) return;
         this.isShuttingDown = true;
+        this.isDraining = false;
 
         this.logger.info('Initiating graceful shutdown...', { initiator });
 
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer);
             this.heartbeatTimer = null;
+        }
+        if (this.drainTimer) {
+            clearInterval(this.drainTimer);
+            this.drainTimer = null;
+        }
+        if (this.drainTimeout) {
+            clearTimeout(this.drainTimeout);
+            this.drainTimeout = null;
         }
 
         try {
@@ -224,6 +303,12 @@ class BrowserWorker {
     private async cleanupAndExit(exitCode: number): Promise<void> {
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer);
+        }
+        if (this.drainTimer) {
+            clearInterval(this.drainTimer);
+        }
+        if (this.drainTimeout) {
+            clearTimeout(this.drainTimeout);
         }
 
         try {
