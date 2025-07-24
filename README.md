@@ -1,7 +1,7 @@
 # playwright-distributed
 
 ## What is playwright-distributed?
-A self-hosted, **distributed browser pool** powered by [Playwright](https://playwright.dev/). It exposes **one WebSocket endpoint** that hands you a ready-to-use browser session while transparently load-balancing between headless browser workers.
+A self-hosted, **distributed browser pool** powered by Playwright. It exposes **one WebSocket endpoint** that hands you a ready-to-use browser session while transparently load-balancing between headless browser workers.
 
 * 🔌 **Plug & play** – spin up a proxy + any number of workers; no extra services required besides Redis.
 * 🏗️ **Infrastructure-agnostic** – works on any VPS or bare-metal machine; scale horizontally by adding workers.
@@ -10,12 +10,11 @@ A self-hosted, **distributed browser pool** powered by [Playwright](https://play
 ---
 ## Get started
 ```bash
-$ git clone https://github.com/your_org/playwright-distributed.git
+$ git clone https://github.com/mbroton/playwright-distributed.git
 $ cd playwright-distributed
 $ docker compose up -d   # brings up proxy, 1 worker, Redis
 # Now, grab a browser: ws://localhost:8080 is now your Playwright endpoint
 ```
-Stop it with `docker compose down`.
 
 ---
 ## Why playwright-distributed?
@@ -116,7 +115,7 @@ Components:
 * **Redis** – lightweight coordination (no persistent DB required).
 
 ### How sessions are handled
-* **One connection ⇢ one context** – every incoming WebSocket connection gets its **own fresh browser context** inside a long-lived Chromium instance. This keeps cookies, localStorage and other state isolated between sessions.
+* **One connection -> one context** – every incoming WebSocket connection gets its **own fresh browser context** inside a long-lived Chromium instance. This keeps cookies, localStorage and other state isolated between sessions.
 * **Concurrent sessions** – each worker can serve multiple contexts in parallel (configurable; default ≈ 5). The proxy’s Lua script always picks the least-loaded worker.
 * **Lifetime cap & recycling** – after a worker has served a configurable number of total sessions (default ≈ 50), it shuts itself down. Combined with Docker’s `--restart unless-stopped` policy this gives you automatic recycling, freeing leaked memory and clearing browser cache with zero manual intervention.
 
