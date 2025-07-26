@@ -159,6 +159,16 @@ flowchart TD
 4. **Smart worker selection** – the proxy’s algorithm keeps workers from hitting their restart threshold at the same time and still favours the busiest eligible worker.
 
 
+## 🗺️ Roadmap
+
+Here's what's planned for the near future:
+
+- **Browser Support:** Add support for Firefox and WebKit, in addition to Chromium.
+- **Pre-built Images:** Publish official Docker images to GitHub Packages for easier setup.
+- **Documentation:** Create comprehensive guides for deployment (K8s, bare metal) and various use-cases.
+- **Testing:** Implement a full test suite to ensure stability and reliability.
+
+
 ## 🤝 Contributing
 
 Found a bug? Have an idea for improvement? PRs and issues are welcome!
