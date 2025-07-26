@@ -131,6 +131,10 @@ func (c *Client) TriggerWorkerShutdownIfNeeded(ctx context.Context, workerID str
 	}
 
 	if wasSet {
+		if pubErr := c.rd.Publish(ctx, cmdKey, "shutdown").Err(); pubErr != nil {
+			logger.WithField("workerId", workerID).Warnf("Failed to publish shutdown command: %v", pubErr)
+		}
+
 		logger.WithField("workerId", workerID).Infof(
 			"Worker has reached session limit (%d/%d). Shutdown command sent.",
 			currentLifetime,

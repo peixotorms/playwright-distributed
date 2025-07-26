@@ -21,6 +21,7 @@ class BrowserWorker {
     private browserServer: BrowserServer | null = null;
 
     private readonly redis: RedisClientType;
+    private readonly redisSub: RedisClientType;
     private readonly redisKey: string;
     private readonly redisCmdKey: string;
 
@@ -38,8 +39,9 @@ class BrowserWorker {
     constructor() {
         this.workerId = crypto.randomUUID();
         this.config = loadConfig();
-        this.logger = new Logger(this.workerId, this.config.logging.level);
+        this.logger = new Logger(this.workerId, this.config.logging.level, this.config.logging.format);
         this.redis = createClient({ url: this.config.redis.url });
+        this.redisSub = createClient({ url: this.config.redis.url });
         this.redisKey = `worker:${this.workerId}`;
         this.redisCmdKey = `worker:cmd:${this.workerId}`;
     }
@@ -51,34 +53,57 @@ class BrowserWorker {
         return { message: String(error) };
     }
 
-    private async connectToRedis(): Promise<void> {
+    private async connectRedisClient(client: RedisClientType, purpose: string): Promise<void> {
         let attempts = 0;
-        this.logger.info('Connecting to Redis...', { url: this.config.redis.url });
+        this.logger.info(`Connecting to Redis for ${purpose}...`, { url: this.config.redis.url });
         while (attempts < this.config.redis.retryAttempts) {
             try {
                 await Promise.race([
-                    this.redis.connect(),
+                    client.connect(),
                     new Promise((_, reject) =>
                         setTimeout(() => reject(new Error('Redis connection timed out')), 2000)
                     )
                 ]);
 
-                await this.redis.ping();
+                await client.ping();
 
-                this.logger.info('Successfully connected to Redis', { url: this.config.redis.url });
+                this.logger.info(`Successfully connected to Redis for ${purpose}`, { url: this.config.redis.url });
                 return;
             } catch (error) {
                 attempts++;
-                this.logger.warn('Redis connection attempt failed', {
+                this.logger.warn(`Redis connection attempt failed for ${purpose}`, {
                     attempt: attempts,
                     maxAttempts: this.config.redis.retryAttempts,
                     error: this.formatError(error)
                 });
                 if (attempts >= this.config.redis.retryAttempts) {
-                    throw new Error(`Failed to connect to Redis after ${attempts} attempts.`);
+                    throw new Error(`Failed to connect to Redis for ${purpose} after ${attempts} attempts.`);
                 }
                 await new Promise(resolve => setTimeout(resolve, this.config.redis.retryDelay));
             }
+        }
+    }
+
+    private async listenForCommands(): Promise<void> {
+        this.logger.info('Setting up command subscription...', { channel: this.redisCmdKey });
+        
+        try {
+            await this.redisSub.subscribe(this.redisCmdKey, (message) => {
+                this.logger.info('Received command via Pub/Sub', { message, channel: this.redisCmdKey });
+                
+                if (message === 'shutdown') {
+                    this.logger.info('Shutdown command received via Pub/Sub. Initiating drain...');
+                    this.drainAndShutdown('shutdown_command_pubsub');
+                }
+            });
+            
+            this.logger.info('Successfully subscribed to command channel', { channel: this.redisCmdKey });
+        } catch (error) {
+            this.logger.error('Failed to subscribe to command channel', { 
+                channel: this.redisCmdKey, 
+                error: this.formatError(error) 
+            });
+            throw error;
         }
     }
 
@@ -86,7 +111,12 @@ class BrowserWorker {
         this.logger.info('Starting browser worker...', { config: this.config });
 
         try {
-            await this.connectToRedis();
+            await Promise.all([
+                this.connectRedisClient(this.redis, 'main'),
+                this.connectRedisClient(this.redisSub, 'subscription')
+            ]);
+
+            await this.listenForCommands();
 
             this.browserServer = await chromium.launchServer({
                 port: this.config.server.port,
@@ -257,7 +287,7 @@ class BrowserWorker {
                 }
                 await this.gracefulShutdown('drain_error');
             }
-        }, 5000);
+        }, 1000);
     }
 
     private async gracefulShutdown(initiator: string): Promise<void> {
@@ -318,8 +348,17 @@ class BrowserWorker {
             this.logger.error('Failed to remove worker key from Redis during cleanup.', { error: this.formatError(error) });
         }
 
-        await this.redis.quit();
-        this.logger.info('Redis connection closed. Exiting.', { exitCode });
+        try {
+            await Promise.all([
+                this.redis.quit(),
+                this.redisSub.quit()
+            ]);
+            this.logger.info('Redis connections closed.');
+        } catch (error) {
+            this.logger.error('Failed to close Redis connections during cleanup.', { error: this.formatError(error) });
+        }
+
+        this.logger.info('Exiting.', { exitCode });
         process.exit(exitCode);
     }
 }

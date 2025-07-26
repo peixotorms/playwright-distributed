@@ -11,8 +11,8 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - MAX_CONCURRENT_SESSIONS=1
-      - MAX_LIFETIME_SESSIONS=10
+      - MAX_CONCURRENT_SESSIONS=5
+      - MAX_LIFETIME_SESSIONS=50
     ports:
       - "8080:8080"
     depends_on:
@@ -26,6 +26,7 @@ services:
       - REDIS_URL=redis://redis:6379
       - PORT=3131
       - PRIVATE_HOSTNAME=worker
+      - LOG_FORMAT=text
     depends_on:
       - redis
     restart: unless-stopped
