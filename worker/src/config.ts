@@ -18,6 +18,7 @@ export interface WorkerConfig {
     };
     logging: {
         level: 'info' | 'warn' | 'error';
+        format: 'json' | 'text';
     };
 }
 
@@ -32,9 +33,10 @@ const schema = z.object({
     PORT: z.coerce.number().int().positive(),
     PRIVATE_HOSTNAME: z.string().nullish(),
     HEADLESS: z.enum(['true', 'false']).default('true').transform(v => v === 'true'),
-    HEARTBEAT_INTERVAL: z.coerce.number().int().positive().default(15),
+    HEARTBEAT_INTERVAL: z.coerce.number().int().positive().default(5),
 
     LOG_LEVEL: z.enum(['info', 'warn', 'error']).default('info'),
+    LOG_FORMAT: z.enum(['json', 'text']).default('json'),
 });
 
 let loadedConfig: WorkerConfig | null = null;
@@ -61,6 +63,7 @@ export function loadConfig(): WorkerConfig {
             },
             logging: {
                 level: parsed.LOG_LEVEL,
+                format: parsed.LOG_FORMAT,
             },
         };
         return loadedConfig;
