@@ -2,9 +2,7 @@ package config
 
 import (
 	"fmt"
-	"log"
 
-	"github.com/joho/godotenv"
 	"github.com/spf13/viper"
 )
 
@@ -21,11 +19,6 @@ type Config struct {
 }
 
 func LoadConfig() (*Config, error) {
-	err := godotenv.Load()
-	if err != nil {
-		log.Printf("Error loading .env file: %v", err)
-	}
-
 	viper.BindEnv("REDIS_HOST")
 	viper.BindEnv("REDIS_PORT")
 	viper.BindEnv("LOG_LEVEL")
