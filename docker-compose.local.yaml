@@ -5,7 +5,9 @@ services:
       - "6379:6379"
 
   proxy:
-    image: ghcr.io/mbroton/playwright-distributed/proxy:latest
+    build:
+      context: ./proxy
+      dockerfile: Dockerfile
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
@@ -20,7 +22,9 @@ services:
       - redis
 
   worker:
-    image: ghcr.io/mbroton/playwright-distributed/worker:latest
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
     environment:
       - REDIS_URL=redis://redis:6379
       # Port for the worker to listen on for browser connections
