@@ -55,7 +55,7 @@ class BrowserWorker {
 
     private async connectRedisClient(client: RedisClientType, purpose: string): Promise<void> {
         let attempts = 0;
-        this.logger.info(`Connecting to Redis for ${purpose}...`, { url: this.config.redis.url });
+        this.logger.debug(`Connecting to Redis for ${purpose}...`, { url: this.config.redis.url });
         while (attempts < this.config.redis.retryAttempts) {
             try {
                 await Promise.race([
@@ -67,7 +67,7 @@ class BrowserWorker {
 
                 await client.ping();
 
-                this.logger.info(`Successfully connected to Redis for ${purpose}`, { url: this.config.redis.url });
+                this.logger.debug(`Successfully connected to Redis for ${purpose}`, { url: this.config.redis.url });
                 return;
             } catch (error) {
                 attempts++;
@@ -85,19 +85,19 @@ class BrowserWorker {
     }
 
     private async listenForCommands(): Promise<void> {
-        this.logger.info('Setting up command subscription...', { channel: this.redisCmdKey });
+        this.logger.debug('Setting up command subscription...', { channel: this.redisCmdKey });
         
         try {
             await this.redisSub.subscribe(this.redisCmdKey, (message) => {
-                this.logger.info('Received command via Pub/Sub', { message, channel: this.redisCmdKey });
+                this.logger.debug('Received command via Pub/Sub', { message, channel: this.redisCmdKey });
                 
                 if (message === 'shutdown') {
-                    this.logger.info('Shutdown command received via Pub/Sub. Initiating drain...');
+                    this.logger.debug('Shutdown command received. Initiating drain...');
                     this.drainAndShutdown('shutdown_command_pubsub');
                 }
             });
             
-            this.logger.info('Successfully subscribed to command channel', { channel: this.redisCmdKey });
+            this.logger.debug('Successfully subscribed to command channel', { channel: this.redisCmdKey });
         } catch (error) {
             this.logger.error('Failed to subscribe to command channel', { 
                 channel: this.redisCmdKey, 
@@ -130,7 +130,7 @@ class BrowserWorker {
                 this.internalEndpoint = wsEndpoint.replace(/ws:\/\/127\.0\.0\.1|ws:\/\/localhost/, `ws://${this.config.server.privateHostname}`);
             }
 
-            this.logger.info('Browser server launched', { endpoint: this.internalEndpoint });
+            this.logger.debug('Browser server launched', { endpoint: this.internalEndpoint });
 
             await this.initializeCounters();
             await this.register();
@@ -140,7 +140,7 @@ class BrowserWorker {
             process.on('SIGINT', () => this.gracefulShutdown('SIGINT'));
             process.on('SIGTERM', () => this.gracefulShutdown('SIGTERM'));
 
-            this.logger.info('Browser worker is running and registered.');
+            this.logger.info('Browser worker is ready to work');
 
         } catch (error) {
             this.logger.error('Failed to start browser worker', { error: this.formatError(error) });
@@ -149,7 +149,7 @@ class BrowserWorker {
     }
 
     private async initializeCounters(): Promise<void> {
-        this.logger.info('Initializing worker connection counters in Redis...');
+        this.logger.debug('Initializing worker connection counters in Redis...');
         try {
             const [activeResult, lifetimeResult] = await Promise.all([
                 this.redis.hSetNX('cluster:active_connections', this.workerId, String(0)),
@@ -157,9 +157,9 @@ class BrowserWorker {
             ]);
 
             if (activeResult && lifetimeResult) {
-                this.logger.info('Successfully initialized connection counters.');
+                this.logger.debug('Successfully initialized connection counters.');
             } else {
-                this.logger.info('Connection counters were already initialized for this worker.');
+                this.logger.debug('Connection counters were already initialized for this worker.');
             }
         } catch (error) {
             this.logger.error('Failed to initialize connection counters. Worker will not start.', { error: this.formatError(error) });
@@ -189,7 +189,7 @@ class BrowserWorker {
         await this.redis.hSet(this.redisKey, metadata as unknown as Record<string, string>);
         await this.redis.expire(this.redisKey, this.config.redis.keyTtl);
 
-        this.logger.info('Worker registered in Redis', { key: this.redisKey, endpoint: this.internalEndpoint });
+        this.logger.debug('Worker registered in Redis', { key: this.redisKey, endpoint: this.internalEndpoint });
     }
 
     private startHeartbeat(): void {
@@ -197,7 +197,7 @@ class BrowserWorker {
             () => this.performHeartbeat(),
             this.config.server.heartbeatInterval
         );
-        this.logger.info('Heartbeat started', { intervalMs: this.config.server.heartbeatInterval });
+        this.logger.debug('Heartbeat started', { intervalMs: this.config.server.heartbeatInterval });
     }
 
     private async performHeartbeat(): Promise<void> {
@@ -213,7 +213,7 @@ class BrowserWorker {
 
             await this.redis.hSet(this.redisKey, 'lastHeartbeat', Date.now());
             await this.redis.expire(this.redisKey, this.config.redis.keyTtl);
-            this.logger.info('Heartbeat sent', { key: this.redisKey });
+            this.logger.debug('Heartbeat sent', { key: this.redisKey });
 
 
             if (this.isDraining) {
@@ -264,7 +264,7 @@ class BrowserWorker {
                         clearTimeout(this.drainTimeout);
                         this.drainTimeout = null;
                     }
-                    this.logger.info('Invalid connection count detected. Proceeding with shutdown.');
+                    this.logger.warn('Invalid connection count detected. Proceeding with shutdown.');
                     await this.gracefulShutdown('drain_invalid_count');
                     return;
                 }
@@ -311,7 +311,7 @@ class BrowserWorker {
         }
 
         try {
-            this.logger.info('Updating worker status to "shutting-down" in Redis.');
+            this.logger.debug('Updating worker status to "shutting-down" in Redis.');
             const exists = await this.redis.exists(this.redisKey);
             if (exists) {
                 await this.redis.hSet(this.redisKey, 'status', 'shutting-down');
@@ -322,7 +322,7 @@ class BrowserWorker {
         }
 
         if (this.browserServer) {
-            this.logger.info('Closing the browser server.');
+            this.logger.debug('Closing the browser server.');
             await this.browserServer.close();
             this.logger.info('Browser server closed.');
         }
@@ -343,7 +343,7 @@ class BrowserWorker {
 
         try {
             await this.redis.del(this.redisKey);
-            this.logger.info('Worker key removed from Redis.');
+            this.logger.debug('Worker key removed from Redis.');
         } catch (error) {
             this.logger.error('Failed to remove worker key from Redis during cleanup.', { error: this.formatError(error) });
         }
@@ -353,12 +353,12 @@ class BrowserWorker {
                 this.redis.quit(),
                 this.redisSub.quit()
             ]);
-            this.logger.info('Redis connections closed.');
+            this.logger.debug('Redis connections closed.');
         } catch (error) {
             this.logger.error('Failed to close Redis connections during cleanup.', { error: this.formatError(error) });
         }
 
-        this.logger.info('Exiting.', { exitCode });
+        this.logger.info('Worker cleanup complete. Exiting process.', { exitCode });
         process.exit(exitCode);
     }
 }

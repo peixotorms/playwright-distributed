@@ -1,11 +1,11 @@
-import type { WorkerConfig } from "./config.js";
+import type { WorkerConfig, LogLevel } from "./config.js";
 
 export class Logger {
     private workerId: string;
     private logLevel: number;
     private format: 'json' | 'text';
-    private levels: { [key: string]: number } = { 'info': 0, 'warn': 1, 'error': 2 };
-    private logFn: (level: 'info' | 'warn' | 'error', message: string, data?: Record<string, any>) => void;
+    private levels: { [K in LogLevel]: number } = { 'debug': 0, 'info': 1, 'warn': 2, 'error': 3 };
+    private logFn: (level: LogLevel, message: string, data?: Record<string, any>) => void;
 
     constructor(workerId: string, level: WorkerConfig['logging']['level'] = 'info', format: WorkerConfig['logging']['format'] = 'json') {
         this.workerId = workerId;
@@ -19,7 +19,7 @@ export class Logger {
         }
     }
 
-    private logJson(level: 'info' | 'warn' | 'error', message: string, data?: Record<string, any>): void {
+    private logJson(level: LogLevel, message: string, data?: Record<string, any>): void {
         const entry = {
             timestamp: new Date().toISOString(),
             level,
@@ -30,17 +30,21 @@ export class Logger {
         console.log(JSON.stringify(entry));
     }
 
-    private logText(level: 'info' | 'warn' | 'error', message: string, data?: Record<string, any>): void {
+    private logText(level: LogLevel, message: string, data?: Record<string, any>): void {
         const timestamp = new Date().toISOString();
         const dataString = data ? `\n${JSON.stringify(data, null, 2)}` : '';
         console.log(`${timestamp} [${level.toUpperCase()}] [${this.workerId}] ${message}${dataString}`);
     }
 
-    private log(level: 'info' | 'warn' | 'error', message: string, data?: Record<string, any>): void {
+    private log(level: LogLevel, message: string, data?: Record<string, any>): void {
         if ((this.levels[level] as number) < this.logLevel) {
             return;
         }
         this.logFn(level, message, data);
+    }
+
+    debug(message: string, data?: Record<string, any>): void {
+        this.log('debug', message, data);
     }
 
     info(message: string, data?: Record<string, any>): void {

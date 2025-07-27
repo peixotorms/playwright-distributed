@@ -3,6 +3,9 @@ import { config } from 'dotenv';
 
 config();
 
+const logLevels = ['debug', 'info', 'warn', 'error'] as const;
+export type LogLevel = typeof logLevels[number];
+
 export interface WorkerConfig {
     redis: {
         url: string;
@@ -17,7 +20,7 @@ export interface WorkerConfig {
         heartbeatInterval: number; // in milliseconds
     };
     logging: {
-        level: 'info' | 'warn' | 'error';
+        level: LogLevel;
         format: 'json' | 'text';
     };
 }
@@ -35,7 +38,7 @@ const schema = z.object({
     HEADLESS: z.enum(['true', 'false']).default('true').transform(v => v === 'true'),
     HEARTBEAT_INTERVAL: z.coerce.number().int().positive().default(5),
 
-    LOG_LEVEL: z.enum(['info', 'warn', 'error']).default('info'),
+    LOG_LEVEL: z.enum(logLevels).default('info'),
     LOG_FORMAT: z.enum(['json', 'text']).default('json'),
 });
 
