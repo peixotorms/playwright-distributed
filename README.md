@@ -164,7 +164,6 @@ flowchart TD
 Here's what's planned for the near future:
 
 - **Browser Support:** Add support for Firefox and WebKit, in addition to Chromium.
-- **Pre-built Images:** Publish official Docker images to GitHub Packages for easier setup.
 - **Documentation:** Create comprehensive guides for deployment (K8s, bare metal) and various use-cases.
 - **Testing:** Implement a full test suite to ensure stability and reliability.
 
