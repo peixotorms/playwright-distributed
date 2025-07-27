@@ -1,15 +1,13 @@
 {
-  "name": "pool",
+  "name": "worker",
   "type": "module",
   "private": true,
   "scripts": {
-    "dev": "node --loader ts-node/esm src/index.ts",
-    "start": "node --loader ts-node/esm src/index.ts",
-    "health-check": "node --loader ts-node/esm src/health-check.ts"
+    "start": "tsx src/index.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.13",
-    "ts-node": "^10.9.2"
+    "tsx": "^4.20.3"
   },
   "peerDependencies": {
     "typescript": "^5"
