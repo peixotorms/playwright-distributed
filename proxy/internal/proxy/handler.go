@@ -103,12 +103,13 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 		defer clientConn.Close()
 
 		atomic.AddInt64(&activeConnections, 1)
-		logger.Info("Proxy connection established (%s <-> %s). Active connections: %d", r.RemoteAddr, server.Endpoint, atomic.LoadInt64(&activeConnections))
+		logger.Info("New connection from %s", r.RemoteAddr)
+		logger.Debug("Proxy connection established (%s <-> %s)", r.RemoteAddr, server.Endpoint)
 		defer func() {
 			atomic.AddInt64(&activeConnections, -1)
 			// `rd.SelectWorker` is increasing this counter during selection process
 			rd.ModifyActiveConnections(r.Context(), server.ID, -1)
-			logger.Info("Proxy connection closed (%s <-> %s). Active connections: %d", r.RemoteAddr, server.Endpoint, atomic.LoadInt64(&activeConnections))
+			logger.Debug("Proxy connection closed (%s <-> %s)", r.RemoteAddr, server.Endpoint)
 		}()
 
 		done := make(chan struct{})

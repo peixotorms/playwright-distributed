@@ -8,6 +8,7 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - LOG_LEVEL=info
+      - LOG_FORMAT=text
       # Maximum number of concurrent browser sessions allowed
       - MAX_CONCURRENT_SESSIONS=5
       # Maximum number of sessions a worker will handle before it is recycled. The proxy tracks this for each worker.

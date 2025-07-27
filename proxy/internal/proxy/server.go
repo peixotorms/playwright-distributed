@@ -69,11 +69,10 @@ func StartProxyServer(cfg *config.Config, rd *redis.Client) {
 		defer ticker.Stop()
 
 		for range ticker.C {
-			count := atomic.LoadInt64(&activeConnections)
-			logger.Info("Active connections: %d", count)
+			logger.Debug("Active connections: %d", atomic.LoadInt64(&activeConnections))
 		}
 	}()
 
-	logger.Info("Starting proxy server at :8080")
+	logger.Info("Starting proxy server at 0.0.0.0:8080")
 	server.ListenAndServe()
 }
