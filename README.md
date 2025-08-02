@@ -174,4 +174,4 @@ Found a bug? Have an idea for improvement? PRs and issues are welcome!
 
 ## 📜 License
 
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [Apache-2.0 License](LICENSE).
