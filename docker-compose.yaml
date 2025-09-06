@@ -17,6 +17,8 @@ services:
       - "8080:8080"
     depends_on:
       - redis
+    build: ./proxy
+
 
   worker:
     image: ghcr.io/mbroton/playwright-distributed/worker:latest
@@ -31,3 +33,20 @@ services:
     depends_on:
       - redis
     restart: unless-stopped
+    build: ./worker
+
+  worker-firefox:
+    image: ghcr.io/mbroton/playwright-distributed/worker:latest
+    environment:
+      - REDIS_URL=redis://redis:6379
+      # Port for the worker to listen on for browser connections
+      - PORT=3131
+      # Hostname for the worker, registered in Redis. Must be resolvable by the proxy.
+      - PRIVATE_HOSTNAME=worker-firefox
+      - LOG_LEVEL=info
+      - LOG_FORMAT=text
+      - BROWSER_TYPE=firefox
+    depends_on:
+      - redis
+    restart: unless-stopped
+    build: ./worker

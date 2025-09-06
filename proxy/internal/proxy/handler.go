@@ -11,6 +11,7 @@ import (
 	"proxy/pkg/config"
 	"proxy/pkg/httputils"
 	"proxy/pkg/logger"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -22,7 +23,7 @@ const (
 	retryDelay = 500 * time.Millisecond
 )
 
-func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.Duration) (redis.ServerInfo, error) {
+func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.Duration, browserType string) (redis.ServerInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -30,7 +31,7 @@ func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.D
 	defer ticker.Stop()
 
 	for {
-		server, err := rd.SelectWorker(ctx)
+		server, err := rd.SelectWorker(ctx, browserType)
 		if err == nil {
 			return server, nil
 		}
@@ -50,7 +51,13 @@ func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.D
 
 func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/" {
+		var browserType string
+		if r.URL.Path == "/" || r.URL.Path == "/firefox" {
+			browserType = "chromium"
+			if strings.Contains(r.URL.Path, "firefox") {
+				browserType = "firefox"
+			}
+		} else {
 			http.NotFound(w, r)
 			return
 		}
@@ -63,7 +70,7 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 		}
 
 		timeout := time.Duration(cfg.WorkerSelectTimeout) * time.Second
-		server, err := selectWorkerWithRetry(r.Context(), rd, timeout)
+		server, err := selectWorkerWithRetry(r.Context(), rd, timeout, browserType)
 		if err != nil {
 			if errors.Is(err, redis.ErrNoAvailableWorkers) {
 				logger.Error(
@@ -84,7 +91,7 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		go rd.TriggerWorkerShutdownIfNeeded(r.Context(), server.ID)
+		go rd.TriggerWorkerShutdownIfNeeded(r.Context(), &server)
 
 		backendURL, _ := url.Parse(server.Endpoint)
 		serverConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)
@@ -108,7 +115,7 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 		defer func() {
 			atomic.AddInt64(&activeConnections, -1)
 			// `rd.SelectWorker` is increasing this counter during selection process
-			rd.ModifyActiveConnections(r.Context(), server.ID, -1)
+			rd.ModifyActiveConnections(r.Context(), &server, -1)
 			logger.Debug("Proxy connection closed (%s <-> %s)", r.RemoteAddr, server.Endpoint)
 		}()
 

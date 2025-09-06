@@ -37,6 +37,7 @@ func StartProxyServer(cfg *config.Config, rd *redis.Client) {
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("/", proxyHandler(rd, cfg))
+	mux.HandleFunc("/firefox", proxyHandler(rd, cfg))
 
 	server := &http.Server{
 		Addr:         ":8080",

@@ -5,6 +5,7 @@
 
 local max_concurrent_sessions = tonumber(ARGV[1])
 local max_lifetime_sessions = tonumber(ARGV[2])
+local browser_type = tostring(ARGV[3])
 
 local active_hash = 'cluster:active_connections'
 local lifetime_hash = 'cluster:lifetime_connections'
@@ -17,13 +18,18 @@ local active_data = redis.call('HGETALL', active_hash)
 local lifetime_data = redis.call('HGETALL', lifetime_hash)
 local active_map = {}
 local lifetime_map = {}
+
 for i = 1, #active_data, 2 do
-    local uuid = active_data[i]
-    active_map[uuid] = tonumber(active_data[i+1] or 0)
+    if string.find(active_data[i], browser_type) then
+        local uuid = active_data[i]
+        active_map[uuid] = tonumber(active_data[i+1] or 0)
+    end
 end
 for i = 1, #lifetime_data, 2 do
-    local uuid = lifetime_data[i]
-    lifetime_map[uuid] = tonumber(lifetime_data[i+1] or 0)
+    if string.find(lifetime_data[i], browser_type) then
+        local uuid = lifetime_data[i]
+        lifetime_map[uuid] = tonumber(lifetime_data[i+1] or 0)
+    end
 end
 
 if next(active_map) == nil then
