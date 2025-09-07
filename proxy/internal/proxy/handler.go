@@ -51,11 +51,13 @@ func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.D
 
 func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		var browserType string
-		if r.URL.Path == "/" || r.URL.Path == "/firefox" {
-			browserType = "chromium"
+		browserType := cfg.DefaultBrowserType
+		if r.URL.Path == "/" || r.URL.Path == "/chromium" || r.URL.Path == "/firefox" {
 			if strings.Contains(r.URL.Path, "firefox") {
 				browserType = "firefox"
+			}
+			if strings.Contains(r.URL.Path, "chromium") {
+				browserType = "chromium"
 			}
 		} else {
 			http.NotFound(w, r)

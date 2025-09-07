@@ -16,6 +16,7 @@ type Config struct {
 	WorkerSelectTimeout   int    `mapstructure:"WORKER_SELECT_TIMEOUT"`
 	LogLevel              string `mapstructure:"LOG_LEVEL"`
 	LogFormat             string `mapstructure:"LOG_FORMAT"`
+	DefaultBrowserType    string `mapstructure:"DEFAULT_BROWSER_TYPE"`
 }
 
 func LoadConfig() (*Config, error) {
@@ -28,12 +29,14 @@ func LoadConfig() (*Config, error) {
 	viper.BindEnv("REAPER_RUN_INTERVAL")
 	viper.BindEnv("SHUTDOWN_COMMAND_TTL")
 	viper.BindEnv("WORKER_SELECT_TIMEOUT")
+	viper.BindEnv("DEFAULT_BROWSER_TYPE")
 
 	viper.SetDefault("MAX_CONCURRENT_SESSIONS", 5)
 	viper.SetDefault("MAX_LIFETIME_SESSIONS", 50)
 	viper.SetDefault("REAPER_RUN_INTERVAL", 300)
 	viper.SetDefault("SHUTDOWN_COMMAND_TTL", 60)
 	viper.SetDefault("WORKER_SELECT_TIMEOUT", 5)
+	viper.SetDefault("DEFAULT_BROWSER_TYPE", "chromium")
 
 	var cfg Config
 	if err := viper.Unmarshal(&cfg); err != nil {
