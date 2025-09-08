@@ -124,18 +124,15 @@ class BrowserWorker {
 
             await this.listenForCommands();
 
+            const browserConfig = {
+                port: this.config.server.port,
+                headless: this.config.server.headless,
+                wsPath: `/playwright/${this.workerId}`,
+            };
             if (this.config.server.browserType === 'chromium') {
-                this.browserServer = await chromium.launchServer({
-                    port: this.config.server.port,
-                    headless: this.config.server.headless,
-                    wsPath: `/playwright/${this.workerId}`,
-                });
+                this.browserServer = await chromium.launchServer(browserConfig);
             } else {
-                this.browserServer = await firefox.launchServer({
-                    port: this.config.server.port,
-                    headless: this.config.server.headless,
-                    wsPath: `/playwright/${this.workerId}`,
-                });
+                this.browserServer = await firefox.launchServer(browserConfig);
             }
 
             const wsEndpoint = this.browserServer.wsEndpoint();

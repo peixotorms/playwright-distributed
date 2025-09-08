@@ -5,7 +5,8 @@
 
 local max_concurrent_sessions = tonumber(ARGV[1])
 local max_lifetime_sessions = tonumber(ARGV[2])
-local browser_type = tostring(ARGV[3])
+local browser_type = if ARGV[3] == nil then 'chromium' else tostring(ARGV[3]) end
+local prefix = browser_type .. ':'
 
 local active_hash = 'cluster:active_connections'
 local lifetime_hash = 'cluster:lifetime_connections'
@@ -20,13 +21,13 @@ local active_map = {}
 local lifetime_map = {}
 
 for i = 1, #active_data, 2 do
-    if string.find(active_data[i], browser_type) then
+    if string.sub(active_data[i], 1, #prefix) == prefix then
         local uuid = active_data[i]
         active_map[uuid] = tonumber(active_data[i+1] or 0)
     end
 end
 for i = 1, #lifetime_data, 2 do
-    if string.find(lifetime_data[i], browser_type) then
+    if string.sub(lifetime_data[i], 1, #prefix) == prefix then
         local uuid = lifetime_data[i]
         lifetime_map[uuid] = tonumber(lifetime_data[i+1] or 0)
     end
