@@ -129,11 +129,17 @@ class BrowserWorker {
                 headless: this.config.server.headless,
                 wsPath: `/playwright/${this.workerId}`,
             };
-            if (this.config.server.browserType === 'chromium') {
-                this.browserServer = await chromium.launchServer(browserConfig);
-            } else {
-                this.browserServer = await firefox.launchServer(browserConfig);
-            }
+            
+            switch (this.config.server.browserType) {
+                case 'chromium':
+                    this.browserServer = await chromium.launchServer(browserConfig);
+                    break;
+                case 'firefox':
+                    this.browserServer = await firefox.launchServer(browserConfig);
+                    break;
+                default:
+                    throw new Error(`Unknown browser type: ${this.config.server.browserType}`);
+            };
 
             const wsEndpoint = this.browserServer.wsEndpoint();
             this.internalEndpoint = wsEndpoint;

@@ -5,6 +5,11 @@
 
 local max_concurrent_sessions = tonumber(ARGV[1])
 local max_lifetime_sessions = tonumber(ARGV[2])
+local browser_type = 'chromium'
+if ARGV[3] ~= nil then
+    browser_type = tostring(ARGV[3])
+end
+
 local browser_type = if ARGV[3] == nil then 'chromium' else tostring(ARGV[3]) end
 local prefix = browser_type .. ':'
 

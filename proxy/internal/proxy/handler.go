@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -11,7 +12,6 @@ import (
 	"proxy/pkg/config"
 	"proxy/pkg/httputils"
 	"proxy/pkg/logger"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -57,11 +57,14 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 		}
 		browserType := cfg.DefaultBrowserType
 		if b := r.URL.Query().Get("browser"); b != "" {
-			if strings.Contains(r.URL.Path, "firefox") {
+			switch b {
+			case "firefox":
 				browserType = "firefox"
-			}
-			if strings.Contains(r.URL.Path, "chromium") {
+			case "chromium":
 				browserType = "chromium"
+			default:
+				httputils.ErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("Unknown browser type: %s - allowed: chromium, firefox", b))
+				return
 			}
 		}
 
