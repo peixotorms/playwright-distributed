@@ -2,12 +2,12 @@ FROM node:20-bookworm
 
 WORKDIR /browser_server
 
-RUN npx -y playwright@latest install --with-deps
-
 COPY ./package.json ./package.json
 COPY ./package-lock.json ./package-lock.json
 
-RUN npm install
+RUN npm ci
+
+RUN npx -y playwright install --with-deps
 
 COPY ./tsconfig.json ./tsconfig.json
 COPY ./src/ ./src/

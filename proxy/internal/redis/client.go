@@ -64,10 +64,15 @@ func (c *Client) Close() error {
 
 type ServerInfo struct {
 	ID            string `redis:"id"`
+	BrowserType   string `redis:"browserType"`
 	Endpoint      string `redis:"endpoint"`
 	Status        string `redis:"status"`
 	StartedAt     string `redis:"startedAt"`
 	LastHeartbeat string `redis:"lastHeartbeat"`
+}
+
+func (s *ServerInfo) WorkerID() string {
+	return fmt.Sprintf("%s:%s", s.BrowserType, s.ID)
 }
 
 func (c *Client) GetAllActiveConnections(ctx context.Context) (map[string]int64, error) {
@@ -112,10 +117,10 @@ func (c *Client) GetLifetimeConnections(ctx context.Context, workerId string) (i
 	return val, nil
 }
 
-func (c *Client) TriggerWorkerShutdownIfNeeded(ctx context.Context, workerID string) {
-	currentLifetime, err := c.GetLifetimeConnections(ctx, workerID)
+func (c *Client) TriggerWorkerShutdownIfNeeded(ctx context.Context, serverInfo *ServerInfo) {
+	currentLifetime, err := c.GetLifetimeConnections(ctx, serverInfo.WorkerID())
 	if err != nil {
-		logger.WithField("workerId", workerID).Errorf("Could not get lifetime connections: %v", err)
+		logger.WithField("workerId", serverInfo.WorkerID()).Errorf("Could not get lifetime connections: %v", err)
 		return
 	}
 
@@ -123,19 +128,19 @@ func (c *Client) TriggerWorkerShutdownIfNeeded(ctx context.Context, workerID str
 		return
 	}
 
-	cmdKey := fmt.Sprintf("worker:cmd:%s", workerID)
+	cmdKey := fmt.Sprintf("worker:cmd:%s", serverInfo.WorkerID())
 	wasSet, err := c.rd.SetNX(ctx, cmdKey, "shutdown", time.Duration(c.cfg.ShutdownCommandTTL)*time.Second).Result()
 	if err != nil {
-		logger.WithField("workerId", workerID).Errorf("Failed to set shutdown command: %v", err)
+		logger.WithField("workerId", serverInfo.WorkerID()).Errorf("Failed to set shutdown command: %v", err)
 		return
 	}
 
 	if wasSet {
 		if pubErr := c.rd.Publish(ctx, cmdKey, "shutdown").Err(); pubErr != nil {
-			logger.WithField("workerId", workerID).Warnf("Failed to publish shutdown command: %v", pubErr)
+			logger.WithField("workerId", serverInfo.WorkerID()).Warnf("Failed to publish shutdown command: %v", pubErr)
 		}
 
-		logger.WithField("workerId", workerID).Infof(
+		logger.WithField("workerId", serverInfo.WorkerID()).Infof(
 			"Worker has reached session limit (%d/%d). Shutdown command sent.",
 			currentLifetime,
 			c.cfg.MaxLifetimeSessions,
@@ -143,19 +148,19 @@ func (c *Client) TriggerWorkerShutdownIfNeeded(ctx context.Context, workerID str
 	}
 }
 
-func (c *Client) ModifyActiveConnections(ctx context.Context, workerId string, delta int64) error {
-	err := c.rd.HIncrBy(ctx, activeConnectionsKey, workerId, int64(delta)).Err()
+func (c *Client) ModifyActiveConnections(ctx context.Context, serverInfo *ServerInfo, delta int64) error {
+	err := c.rd.HIncrBy(ctx, activeConnectionsKey, serverInfo.WorkerID(), int64(delta)).Err()
 	if err != nil {
-		return fmt.Errorf("failed to modify active connections for worker %s: %w", workerId, err)
+		return fmt.Errorf("failed to modify active connections for worker %s: %w", serverInfo.WorkerID(), err)
 	}
 
 	return nil
 }
 
-func (c *Client) ModifyLifetimeConnections(ctx context.Context, workerId string, delta int64) error {
-	err := c.rd.HIncrBy(ctx, lifetimeConnectionsKey, workerId, int64(delta)).Err()
+func (c *Client) ModifyLifetimeConnections(ctx context.Context, serverInfo *ServerInfo, delta int64) error {
+	err := c.rd.HIncrBy(ctx, lifetimeConnectionsKey, serverInfo.WorkerID(), int64(delta)).Err()
 	if err != nil {
-		return fmt.Errorf("failed to modify lifetime connections for worker %s: %w", workerId, err)
+		return fmt.Errorf("failed to modify lifetime connections for worker %s: %w", serverInfo.WorkerID(), err)
 	}
 
 	return nil
@@ -176,13 +181,14 @@ func (c *Client) GetWorker(ctx context.Context, workerId string) (ServerInfo, er
 	return serverInfo, nil
 }
 
-func (c *Client) SelectWorker(ctx context.Context) (ServerInfo, error) {
+func (c *Client) SelectWorker(ctx context.Context, browserType string) (ServerInfo, error) {
 	result, err := c.selectorScript.Run(
 		ctx,
 		c.rd,
 		[]string{},
 		c.cfg.MaxConcurrentSessions,
 		c.cfg.MaxLifetimeSessions,
+		browserType,
 	).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {

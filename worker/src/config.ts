@@ -18,6 +18,7 @@ export interface WorkerConfig {
         privateHostname?: string | null;
         headless: boolean;
         heartbeatInterval: number; // in milliseconds
+        browserType: 'chromium' | 'firefox';
     };
     logging: {
         level: LogLevel;
@@ -33,6 +34,7 @@ const schema = z.object({
     REDIS_RETRY_ATTEMPTS: z.coerce.number().int().positive().default(5),
     REDIS_RETRY_DELAY: z.coerce.number().int().positive().default(3),
 
+    BROWSER_TYPE: z.enum(['chromium', 'firefox']).default('chromium'),
     PORT: z.coerce.number().int().positive(),
     PRIVATE_HOSTNAME: z.string().nullish(),
     HEADLESS: z.enum(['true', 'false']).default('true').transform(v => v === 'true'),
@@ -59,6 +61,7 @@ export function loadConfig(): WorkerConfig {
                 retryDelay: parsed.REDIS_RETRY_DELAY * 1000, // Converted to MS for setTimeout
             },
             server: {
+                browserType: parsed.BROWSER_TYPE,
                 port: parsed.PORT,
                 privateHostname: parsed.PRIVATE_HOSTNAME,
                 headless: parsed.HEADLESS,

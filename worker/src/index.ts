@@ -1,4 +1,4 @@
-import { chromium, type BrowserServer } from 'playwright';
+import { chromium, firefox, type BrowserServer } from 'playwright';
 import { createClient, type RedisClientType } from 'redis';
 import { loadConfig } from './config.js';
 import type { WorkerConfig } from './config.js';
@@ -7,11 +7,15 @@ import { Logger } from './logger.js';
 
 interface WorkerMetadata {
     id: string;
+    browserType: 'chromium' | 'firefox';
     endpoint: string;
     status: 'available' | 'draining' | 'shutting-down';
     startedAt: number;
     lastHeartbeat: number;
 }
+
+const clusterActiveConnectionsKey = 'cluster:active_connections';
+const clusterLifetimeConnectionsKey = 'cluster:lifetime_connections';
 
 
 class BrowserWorker {
@@ -24,6 +28,7 @@ class BrowserWorker {
     private readonly redisSub: RedisClientType;
     private readonly redisKey: string;
     private readonly redisCmdKey: string;
+    private readonly workerIdKey: string;
 
     // State
     private isShuttingDown: boolean = false;
@@ -42,8 +47,9 @@ class BrowserWorker {
         this.logger = new Logger(this.workerId, this.config.logging.level, this.config.logging.format);
         this.redis = createClient({ url: this.config.redis.url });
         this.redisSub = createClient({ url: this.config.redis.url });
-        this.redisKey = `worker:${this.workerId}`;
-        this.redisCmdKey = `worker:cmd:${this.workerId}`;
+        this.redisKey = `worker:${this.config.server.browserType}:${this.workerId}`;
+        this.redisCmdKey = `worker:cmd:${this.config.server.browserType}:${this.workerId}`;
+        this.workerIdKey = `${this.config.server.browserType}:${this.workerId}`;
     }
 
     private formatError(error: unknown): Record<string, any> {
@@ -86,22 +92,22 @@ class BrowserWorker {
 
     private async listenForCommands(): Promise<void> {
         this.logger.debug('Setting up command subscription...', { channel: this.redisCmdKey });
-        
+
         try {
             await this.redisSub.subscribe(this.redisCmdKey, (message) => {
                 this.logger.debug('Received command via Pub/Sub', { message, channel: this.redisCmdKey });
-                
+
                 if (message === 'shutdown') {
                     this.logger.debug('Shutdown command received. Initiating drain...');
                     this.drainAndShutdown('shutdown_command_pubsub');
                 }
             });
-            
+
             this.logger.debug('Successfully subscribed to command channel', { channel: this.redisCmdKey });
         } catch (error) {
-            this.logger.error('Failed to subscribe to command channel', { 
-                channel: this.redisCmdKey, 
-                error: this.formatError(error) 
+            this.logger.error('Failed to subscribe to command channel', {
+                channel: this.redisCmdKey,
+                error: this.formatError(error)
             });
             throw error;
         }
@@ -118,11 +124,22 @@ class BrowserWorker {
 
             await this.listenForCommands();
 
-            this.browserServer = await chromium.launchServer({
+            const browserConfig = {
                 port: this.config.server.port,
                 headless: this.config.server.headless,
                 wsPath: `/playwright/${this.workerId}`,
-            });
+            };
+            
+            switch (this.config.server.browserType) {
+                case 'chromium':
+                    this.browserServer = await chromium.launchServer(browserConfig);
+                    break;
+                case 'firefox':
+                    this.browserServer = await firefox.launchServer(browserConfig);
+                    break;
+                default:
+                    throw new Error(`Unknown browser type: ${this.config.server.browserType}`);
+            };
 
             const wsEndpoint = this.browserServer.wsEndpoint();
             this.internalEndpoint = wsEndpoint;
@@ -152,8 +169,8 @@ class BrowserWorker {
         this.logger.debug('Initializing worker connection counters in Redis...');
         try {
             const [activeResult, lifetimeResult] = await Promise.all([
-                this.redis.hSetNX('cluster:active_connections', this.workerId, String(0)),
-                this.redis.hSetNX('cluster:lifetime_connections', this.workerId, String(0))
+                this.redis.hSetNX(clusterActiveConnectionsKey, this.workerIdKey, String(0)),
+                this.redis.hSetNX(clusterLifetimeConnectionsKey, this.workerIdKey, String(0))
             ]);
 
             if (activeResult && lifetimeResult) {
@@ -180,6 +197,7 @@ class BrowserWorker {
 
         const metadata: WorkerMetadata = {
             id: this.workerId,
+            browserType: this.config.server.browserType,
             endpoint: this.internalEndpoint,
             status: 'available',
             startedAt: this.startedAt,
@@ -255,7 +273,7 @@ class BrowserWorker {
 
         this.drainTimer = setInterval(async () => {
             try {
-                const activeConnections = await this.redis.hGet('cluster:active_connections', this.workerId);
+                const activeConnections = await this.redis.hGet(clusterActiveConnectionsKey, this.workerIdKey);
                 const count = activeConnections ? parseInt(activeConnections, 10) : 0;
 
                 if (!Number.isFinite(count) || count < 0) {

@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -22,7 +23,7 @@ const (
 	retryDelay = 500 * time.Millisecond
 )
 
-func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.Duration) (redis.ServerInfo, error) {
+func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.Duration, browserType string) (redis.ServerInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -30,7 +31,7 @@ func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.D
 	defer ticker.Stop()
 
 	for {
-		server, err := rd.SelectWorker(ctx)
+		server, err := rd.SelectWorker(ctx, browserType)
 		if err == nil {
 			return server, nil
 		}
@@ -54,6 +55,18 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		browserType := cfg.DefaultBrowserType
+		if b := r.URL.Query().Get("browser"); b != "" {
+			switch b {
+			case "firefox":
+				browserType = "firefox"
+			case "chromium":
+				browserType = "chromium"
+			default:
+				httputils.ErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("Unknown browser type: %s - allowed: chromium, firefox", b))
+				return
+			}
+		}
 
 		if !websocket.IsWebSocketUpgrade(r) {
 			httputils.JSONResponse(w, http.StatusUpgradeRequired, models.MessageResponse{
@@ -63,7 +76,7 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 		}
 
 		timeout := time.Duration(cfg.WorkerSelectTimeout) * time.Second
-		server, err := selectWorkerWithRetry(r.Context(), rd, timeout)
+		server, err := selectWorkerWithRetry(r.Context(), rd, timeout, browserType)
 		if err != nil {
 			if errors.Is(err, redis.ErrNoAvailableWorkers) {
 				logger.Error(
@@ -84,7 +97,7 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		go rd.TriggerWorkerShutdownIfNeeded(r.Context(), server.ID)
+		go rd.TriggerWorkerShutdownIfNeeded(r.Context(), &server)
 
 		backendURL, _ := url.Parse(server.Endpoint)
 		serverConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)
@@ -108,7 +121,7 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 		defer func() {
 			atomic.AddInt64(&activeConnections, -1)
 			// `rd.SelectWorker` is increasing this counter during selection process
-			rd.ModifyActiveConnections(r.Context(), server.ID, -1)
+			rd.ModifyActiveConnections(r.Context(), &server, -1)
 			logger.Debug("Proxy connection closed (%s <-> %s)", r.RemoteAddr, server.Endpoint)
 		}()
 
