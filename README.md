@@ -48,7 +48,7 @@ Modern teams often need **many concurrent browsers**: scraping pipelines, AI age
 git clone https://github.com/mbroton/playwright-distributed.git
 cd playwright-distributed
 
-# 2. Fire it up (proxy + 1 worker + Redis)
+# 2. Fire it up (proxy + 1 chromium worker + Redis)
 docker compose up -d
 ```
 
@@ -163,7 +163,7 @@ flowchart TD
 
 Here's what's planned for the near future:
 
-- **Browser Support:** Add support for Firefox and WebKit, in addition to Chromium.
+- **Browser Support:** Add support for WebKit, in addition to Chromium and Firefox.
 - **Documentation:** Create comprehensive guides for deployment (K8s, bare metal) and various use-cases.
 - **Testing:** Implement a full test suite to ensure stability and reliability.
 
