@@ -5,9 +5,15 @@
 
 local max_concurrent_sessions = tonumber(ARGV[1])
 local max_lifetime_sessions = tonumber(ARGV[2])
-local browser_type = 'chromium'
-if ARGV[3] ~= nil then
+-- Require a valid browser type argument
+local browser_type = nil
+if ARGV[3] ~= nil and tostring(ARGV[3]) ~= '' then
     browser_type = tostring(ARGV[3])
+end
+
+-- Only allow known types; if missing or unknown, treat as no available workers
+if browser_type ~= 'chromium' and browser_type ~= 'firefox' then
+    return nil
 end
 
 local prefix = browser_type .. ':'
@@ -55,9 +61,11 @@ local fallback_active = math.huge
 
 for uuid, active in pairs(active_map) do
     local worker_key = 'worker:' .. uuid
-    local worker_fields = redis.call('HMGET', worker_key, 'status', 'lastHeartbeat')
+    -- Also fetch worker's browserType to strictly match ARGV[3]
+    local worker_fields = redis.call('HMGET', worker_key, 'status', 'lastHeartbeat', 'browserType')
     local status = worker_fields[1]
     local lastHeartbeat_str = worker_fields[2]
+    local worker_browser_type = worker_fields[3]
     
     local lifetime = lifetime_map[uuid] or 0
 
@@ -69,7 +77,8 @@ for uuid, active in pairs(active_map) do
         end
     end
     
-    if status == 'available' and active < max_concurrent_sessions and lifetime < max_lifetime_sessions and is_recent then
+    -- Strictly require browser type match in addition to key prefix
+    if worker_browser_type == browser_type and status == 'available' and active < max_concurrent_sessions and lifetime < max_lifetime_sessions and is_recent then
         if lifetime < (max_lifetime_sessions - margin) then
             if lifetime > best_lifetime or (lifetime == best_lifetime and active < best_active) then
                 best_uuid = uuid
