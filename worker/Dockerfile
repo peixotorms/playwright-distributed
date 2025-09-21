@@ -1,4 +1,4 @@
-FROM node:20-bookworm
+FROM mcr.microsoft.com/playwright:v1.55.0
 
 WORKDIR /browser_server
 
@@ -6,8 +6,6 @@ COPY ./package.json ./package.json
 COPY ./package-lock.json ./package-lock.json
 
 RUN npm ci
-
-RUN npx -y playwright install --with-deps
 
 COPY ./tsconfig.json ./tsconfig.json
 COPY ./src/ ./src/
