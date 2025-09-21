@@ -28,6 +28,8 @@ services:
       - PRIVATE_HOSTNAME=worker
       - LOG_LEVEL=info
       - LOG_FORMAT=text
+      # Type of browser to use, supported as of v0.1: chromium, firefox
+      - BROWSER_TYPE=chromium
     depends_on:
       - redis
     restart: unless-stopped
