@@ -3,14 +3,14 @@ updates:
   - package-ecosystem: npm
     directory: "/worker"
     schedule:
-      interval: daily
+      interval: weekly
     open-pull-requests-limit: 5
     labels: ["dependencies", "worker"]
     assignees: ["mbroton"]
   - package-ecosystem: docker
     directory: "/worker"
     schedule:
-      interval: daily
+      interval: weekly
     open-pull-requests-limit: 3
     labels: ["dependencies", "worker"]
     assignees: ["mbroton"]
