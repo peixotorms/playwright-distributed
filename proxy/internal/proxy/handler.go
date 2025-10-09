@@ -62,8 +62,10 @@ func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
 				browserType = "firefox"
 			case "chromium":
 				browserType = "chromium"
+			case "webkit":
+				browserType = "webkit"
 			default:
-				httputils.ErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("Unknown browser type: %s - allowed: chromium, firefox", b))
+				httputils.ErrorResponse(w, http.StatusBadRequest, fmt.Sprintf("Unknown browser type: %s - allowed: chromium, firefox, webkit", b))
 				return
 			}
 		}
