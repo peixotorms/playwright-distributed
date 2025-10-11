@@ -13,15 +13,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/github/license/mbroton/playwright-distributed?color=blue" alt="License"></a>
 </p>
 
-<p align="center">
-  <em>This project is currently in beta.</em>
-</p>
-
 ---
 
 ## Why use playwright-distributed?
 - Single WebSocket endpoint routes each session through a smart selector that balances load *and* staggers worker restarts.
-- Warm Chromium instances - no waiting for browser startup.
+- Warm browser instances (Chrome, Firefox, WebKit) - no waiting for browser startup.
 - Each connection gets a fresh, isolated browser context.
 - Stateless design: add or remove workers at any time; Redis is the only shared component.
 - Works with any Playwright client.
@@ -48,7 +44,7 @@ Modern teams often need **many concurrent browsers**: scraping pipelines, AI age
 git clone https://github.com/mbroton/playwright-distributed.git
 cd playwright-distributed
 
-# 2. Fire it up (proxy + 1 Chromium worker + Redis)
+# 2. Fire it up (proxy + 1 Chrome worker + Redis)
 docker compose up -d
 ```
 
@@ -175,8 +171,8 @@ flowchart TD
 
 1. **One connection → One context** – every websocket maps to a unique browser context.
 2. **Concurrent sessions** – each worker serves several contexts in parallel.
-3. **Recycling** – after serving a configurable number of sessions the worker shuts down; Docker/K8s restarts it, guaranteeing a fresh Chromium.
-4. **Smart worker selection** – the proxy’s algorithm keeps workers from hitting their restart threshold at the same time and still favours the busiest eligible worker.
+3. **Recycling** – after serving a configurable number of sessions the worker shuts down; Docker/K8s restarts it, guaranteeing a fresh browser.
+4. **Smart worker selection** – the proxy's algorithm keeps workers from hitting their restart threshold at the same time and still favours the busiest eligible worker.
 
 
 ## 🗺️ Roadmap
