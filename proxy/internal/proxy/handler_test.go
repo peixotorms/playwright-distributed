@@ -79,6 +79,111 @@ func TestProxyHandler_InvalidBrowserType(t *testing.T) {
 	}
 }
 
+func TestProxyHandler_NonRootPathReturnsNotFound(t *testing.T) {
+	fake := &fakeRedisClient{
+		selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
+			t.Fatalf("selectWorker should not be called, got browserType %s", browserType)
+			return redis.ServerInfo{}, nil
+		},
+	}
+
+	handler := proxyHandler(fake, newTestConfig())
+
+	req := httptest.NewRequest("GET", "/healthz", nil)
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNotFound {
+		t.Fatalf("expected status %d, got %d", http.StatusNotFound, resp.Code)
+	}
+}
+
+func TestProxyHandler_DefaultBrowserTypeIsUsedWhenMissing(t *testing.T) {
+	cfg := newTestConfig()
+	cfg.DefaultBrowserType = "webkit"
+
+	browserCh := make(chan string, 1)
+	fake := &fakeRedisClient{
+		selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
+			browserCh <- browserType
+			return redis.ServerInfo{}, errors.New("boom")
+		},
+	}
+
+	handler := proxyHandler(fake, cfg)
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusInternalServerError {
+		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, resp.Code)
+	}
+
+	select {
+	case browser := <-browserCh:
+		if browser != "webkit" {
+			t.Fatalf("expected browser type 'webkit', got %s", browser)
+		}
+	default:
+		t.Fatal("expected SelectWorker to be called")
+	}
+}
+
+func TestProxyHandler_AllowsKnownBrowserQueryValues(t *testing.T) {
+	tests := []struct {
+		name   string
+		query  string
+		expect string
+	}{
+		{name: "chromium", query: "chromium", expect: "chromium"},
+		{name: "firefox", query: "firefox", expect: "firefox"},
+		{name: "webkit", query: "webkit", expect: "webkit"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			browserCh := make(chan string, 1)
+			fake := &fakeRedisClient{
+				selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
+					browserCh <- browserType
+					return redis.ServerInfo{}, errors.New("boom")
+				},
+			}
+
+			handler := proxyHandler(fake, newTestConfig())
+
+			req := httptest.NewRequest("GET", "/?browser="+tc.query, nil)
+			req.Header.Set("Connection", "Upgrade")
+			req.Header.Set("Upgrade", "websocket")
+			req.Header.Set("Sec-WebSocket-Version", "13")
+			req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+			resp := httptest.NewRecorder()
+
+			handler.ServeHTTP(resp, req)
+
+			if resp.Code != http.StatusInternalServerError {
+				t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, resp.Code)
+			}
+
+			select {
+			case browser := <-browserCh:
+				if browser != tc.expect {
+					t.Fatalf("expected browser type %q, got %q", tc.expect, browser)
+				}
+			default:
+				t.Fatal("expected SelectWorker to be called")
+			}
+		})
+	}
+}
+
 func TestProxyHandler_NonWebSocketRequest(t *testing.T) {
 	handler := proxyHandler(&fakeRedisClient{}, newTestConfig())
 
@@ -113,7 +218,7 @@ func TestProxyHandler_NoAvailableWorkers(t *testing.T) {
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
-	req.Header.Set("Sec-WebSocket-Key", "test")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
 	resp := httptest.NewRecorder()
 
 	handler.ServeHTTP(resp, req)
@@ -326,6 +431,126 @@ func TestProxyHandler_BackendDialFailure(t *testing.T) {
 	case delta := <-modifyCalls:
 		t.Fatalf("ModifyActiveConnections should not be called, but received delta %d", delta)
 	default:
+	}
+}
+
+func TestProxyHandler_WebSocketUpgradeFailureDoesNotIncreaseCounters(t *testing.T) {
+	atomic.StoreInt64(&activeConnections, 0)
+	t.Cleanup(func() {
+		atomic.StoreInt64(&activeConnections, 0)
+	})
+
+	backendUpgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := backendUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("backend upgrade failed: %v", err)
+		}
+		conn.Close()
+	}))
+	defer backend.Close()
+
+	workerEndpoint := "ws" + strings.TrimPrefix(backend.URL, "http")
+
+	modifyCalls := make(chan int64, 1)
+	fake := &fakeRedisClient{
+		selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
+			return redis.ServerInfo{ID: "worker-1", Endpoint: workerEndpoint}, nil
+		},
+		modifyActiveConnectionsFunc: func(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error {
+			modifyCalls <- delta
+			return nil
+		},
+	}
+
+	handler := proxyHandler(fake, newTestConfig())
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Version", "13")
+	req.Header.Set("Sec-WebSocket-Key", "dGhlIHNhbXBsZSBub25jZQ==")
+	resp := httptest.NewRecorder()
+
+	handler.ServeHTTP(resp, req)
+
+	if got := atomic.LoadInt64(&activeConnections); got != 0 {
+		t.Fatalf("expected activeConnections to remain 0, got %d", got)
+	}
+
+	select {
+	case delta := <-modifyCalls:
+		t.Fatalf("ModifyActiveConnections should not be called, got delta %d", delta)
+	default:
+	}
+}
+
+func TestProxyHandler_ModifyActiveConnectionsErrorIsIgnored(t *testing.T) {
+	atomic.StoreInt64(&activeConnections, 0)
+	t.Cleanup(func() {
+		atomic.StoreInt64(&activeConnections, 0)
+	})
+
+	backendUpgrader := websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }}
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := backendUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Fatalf("backend upgrade failed: %v", err)
+		}
+		defer conn.Close()
+
+		for {
+			msgType, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			if err := conn.WriteMessage(msgType, payload); err != nil {
+				return
+			}
+		}
+	}))
+	defer backend.Close()
+
+	workerEndpoint := "ws" + strings.TrimPrefix(backend.URL, "http")
+
+	modifyCalls := make(chan int64, 1)
+	fake := &fakeRedisClient{
+		selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
+			return redis.ServerInfo{ID: "worker-1", Endpoint: workerEndpoint}, nil
+		},
+		modifyActiveConnectionsFunc: func(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error {
+			modifyCalls <- delta
+			return errors.New("redis failure")
+		},
+	}
+
+	cfg := newTestConfig()
+	cfg.WorkerSelectTimeout = 1
+
+	proxyServer := httptest.NewServer(http.HandlerFunc(proxyHandler(fake, cfg)))
+	defer proxyServer.Close()
+
+	proxyURL := "ws" + strings.TrimPrefix(proxyServer.URL, "http")
+	clientConn, _, err := websocket.DefaultDialer.Dial(proxyURL, nil)
+	if err != nil {
+		t.Fatalf("failed to dial proxy: %v", err)
+	}
+
+	if err := clientConn.WriteMessage(websocket.TextMessage, []byte("hello")); err != nil {
+		t.Fatalf("failed to write message: %v", err)
+	}
+
+	if err := clientConn.Close(); err != nil {
+		t.Fatalf("failed to close client connection: %v", err)
+	}
+
+	select {
+	case delta := <-modifyCalls:
+		if delta != -1 {
+			t.Fatalf("expected ModifyActiveConnections delta -1, got %d", delta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected ModifyActiveConnections to be called")
 	}
 }
 
