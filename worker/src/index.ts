@@ -1,4 +1,4 @@
-import { chromium, firefox, type BrowserServer } from 'playwright';
+import { chromium, firefox, webkit, type BrowserServer } from 'playwright';
 import { createClient, type RedisClientType } from 'redis';
 import { loadConfig } from './config.js';
 import type { WorkerConfig } from './config.js';
@@ -7,7 +7,7 @@ import { Logger } from './logger.js';
 
 interface WorkerMetadata {
     id: string;
-    browserType: 'chromium' | 'firefox';
+    browserType: 'chromium' | 'firefox' | 'webkit';
     endpoint: string;
     status: 'available' | 'draining' | 'shutting-down';
     startedAt: number;
@@ -136,6 +136,9 @@ class BrowserWorker {
                     break;
                 case 'firefox':
                     this.browserServer = await firefox.launchServer(browserConfig);
+                    break;
+                case 'webkit':
+                    this.browserServer = await webkit.launchServer(browserConfig);
                     break;
                 default:
                     throw new Error(`Unknown browser type: ${this.config.server.browserType}`);

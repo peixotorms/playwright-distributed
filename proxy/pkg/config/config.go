@@ -51,5 +51,15 @@ func LoadConfig() (*Config, error) {
 		return nil, fmt.Errorf("REDIS_PORT is required")
 	}
 
+	allowedBrowserTypes := map[string]struct{}{
+		"chromium": {},
+		"firefox":  {},
+		"webkit":   {},
+	}
+
+	if _, ok := allowedBrowserTypes[cfg.DefaultBrowserType]; !ok {
+		return nil, fmt.Errorf("DEFAULT_BROWSER_TYPE must be one of: chromium, firefox, webkit")
+	}
+
 	return &cfg, nil
 }

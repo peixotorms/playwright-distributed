@@ -12,7 +12,7 @@ if ARGV[3] ~= nil and tostring(ARGV[3]) ~= '' then
 end
 
 -- Only allow known types; if missing or unknown, treat as no available workers
-if browser_type ~= 'chromium' and browser_type ~= 'firefox' then
+if browser_type ~= 'chromium' and browser_type ~= 'firefox' and browser_type ~= 'webkit' then
     return nil
 end
 

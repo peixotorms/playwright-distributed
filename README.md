@@ -48,7 +48,7 @@ Modern teams often need **many concurrent browsers**: scraping pipelines, AI age
 git clone https://github.com/mbroton/playwright-distributed.git
 cd playwright-distributed
 
-# 2. Fire it up (proxy + 1 chromium worker + Redis)
+# 2. Fire it up (proxy + 1 Chromium worker + Redis)
 docker compose up -d
 ```
 
@@ -64,6 +64,8 @@ await page.goto('https://example.com');
 console.log(await page.title());
 await browser.close();
 ```
+
+> Want Firefox or WebKit? Append `?browser=firefox` or `?browser=webkit` to the WebSocket URL and use the matching Playwright client (`p.firefox.connect`, `p.webkit.connect`, etc.).
 That's it! The same `ws://localhost:8080` endpoint works with any Playwright client (Node.js, Python, Java, .NET, etc.).
 
 
@@ -95,14 +97,23 @@ Run each component (proxy, Redis, workers) as independent services (Docker/K8s).
 ### Node.js
 
 ```js
-import { chromium } from 'playwright';
+import { chromium, firefox, webkit } from 'playwright';
 
+// Chromium workers connect without any query parameters.
 const browser = await chromium.connect('ws://localhost:8080');
 const context = await browser.newContext();
 const page = await context.newPage();
 await page.goto('https://example.com');
 console.log(await page.title());
 await browser.close();
+
+// Target Firefox workers explicitly.
+const firefoxBrowser = await firefox.connect('ws://localhost:8080?browser=firefox');
+await firefoxBrowser.close();
+
+// Or WebKit workers.
+const webkitBrowser = await webkit.connect('ws://localhost:8080?browser=webkit');
+await webkitBrowser.close();
 ```
 
 ### Python
@@ -113,12 +124,21 @@ import asyncio
 
 async def main():
     async with async_playwright() as p:
+        # Chromium (default)
         browser = await p.chromium.connect('ws://localhost:8080')
         context = await browser.new_context()
         page = await context.new_page()
         await page.goto('https://example.com')
         print(await page.title())
         await browser.close()
+
+        # Firefox
+        firefox = await p.firefox.connect('ws://localhost:8080?browser=firefox')
+        await firefox.close()
+
+        # WebKit
+        webkit = await p.webkit.connect('ws://localhost:8080?browser=webkit')
+        await webkit.close()
 
 asyncio.run(main())
 ```
@@ -163,7 +183,6 @@ flowchart TD
 
 Here's what's planned for the near future:
 
-- **Browser Support:** Add support for WebKit, in addition to Chromium and Firefox.
 - **Documentation:** Create comprehensive guides for deployment (K8s, bare metal) and various use-cases.
 - **Testing:** Implement a full test suite to ensure stability and reliability.
 
