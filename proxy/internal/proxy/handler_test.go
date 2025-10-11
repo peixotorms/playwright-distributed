@@ -28,9 +28,10 @@ func init() {
 }
 
 type fakeRedisClient struct {
-	selectWorkerFunc            func(ctx context.Context, browserType string) (redis.ServerInfo, error)
-	triggerWorkerShutdownFunc   func(ctx context.Context, serverInfo *redis.ServerInfo)
-	modifyActiveConnectionsFunc func(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error
+	selectWorkerFunc              func(ctx context.Context, browserType string) (redis.ServerInfo, error)
+	triggerWorkerShutdownFunc     func(ctx context.Context, serverInfo *redis.ServerInfo)
+	modifyActiveConnectionsFunc   func(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error
+	modifyLifetimeConnectionsFunc func(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error
 }
 
 func (f *fakeRedisClient) SelectWorker(ctx context.Context, browserType string) (redis.ServerInfo, error) {
@@ -49,6 +50,13 @@ func (f *fakeRedisClient) TriggerWorkerShutdownIfNeeded(ctx context.Context, ser
 func (f *fakeRedisClient) ModifyActiveConnections(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error {
 	if f.modifyActiveConnectionsFunc != nil {
 		return f.modifyActiveConnectionsFunc(ctx, serverInfo, delta)
+	}
+	return nil
+}
+
+func (f *fakeRedisClient) ModifyLifetimeConnections(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error {
+	if f.modifyLifetimeConnectionsFunc != nil {
+		return f.modifyLifetimeConnectionsFunc(ctx, serverInfo, delta)
 	}
 	return nil
 }
@@ -424,7 +432,8 @@ func TestProxyHandler_SuccessfulConnectionLifecycle(t *testing.T) {
 
 func TestProxyHandler_BackendDialFailure(t *testing.T) {
 	shutdownCalled := make(chan struct{}, 1)
-	modifyCalls := make(chan int64, 1)
+	modifyActiveCalls := make(chan int64, 1)
+	modifyLifetimeCalls := make(chan int64, 1)
 
 	fake := &fakeRedisClient{
 		selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
@@ -434,7 +443,11 @@ func TestProxyHandler_BackendDialFailure(t *testing.T) {
 			shutdownCalled <- struct{}{}
 		},
 		modifyActiveConnectionsFunc: func(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error {
-			modifyCalls <- delta
+			modifyActiveCalls <- delta
+			return nil
+		},
+		modifyLifetimeConnectionsFunc: func(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error {
+			modifyLifetimeCalls <- delta
 			return nil
 		},
 	}
@@ -461,9 +474,21 @@ func TestProxyHandler_BackendDialFailure(t *testing.T) {
 	}
 
 	select {
-	case delta := <-modifyCalls:
-		t.Fatalf("ModifyActiveConnections should not be called, but received delta %d", delta)
-	default:
+	case delta := <-modifyActiveCalls:
+		if delta != -1 {
+			t.Fatalf("expected ModifyActiveConnections delta -1, got %d", delta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected ModifyActiveConnections rollback")
+	}
+
+	select {
+	case delta := <-modifyLifetimeCalls:
+		if delta != -1 {
+			t.Fatalf("expected ModifyLifetimeConnections delta -1, got %d", delta)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected ModifyLifetimeConnections rollback")
 	}
 }
 
