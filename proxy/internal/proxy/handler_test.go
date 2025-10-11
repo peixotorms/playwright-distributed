@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -286,9 +289,39 @@ func TestSelectWorkerWithRetryTimeout(t *testing.T) {
 	}
 
 	timeout := 200 * time.Millisecond
+	start := time.Now()
 	_, err := selectWorkerWithRetry(context.Background(), fake, timeout, "chromium")
 	if !errors.Is(err, redis.ErrNoAvailableWorkers) {
 		t.Fatalf("expected ErrNoAvailableWorkers, got %v", err)
+	}
+
+	if elapsed := time.Since(start); elapsed < timeout {
+		t.Fatalf("expected retry loop to last at least %v, got %v", timeout, elapsed)
+	}
+}
+
+func TestSelectWorkerWithRetryCanceledContext(t *testing.T) {
+	calls := int32(0)
+	fake := &fakeRedisClient{
+		selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
+			atomic.AddInt32(&calls, 1)
+			if ctx.Err() == nil {
+				t.Fatalf("expected context to be cancelled")
+			}
+			return redis.ServerInfo{}, redis.ErrNoAvailableWorkers
+		},
+	}
+
+	parent, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := selectWorkerWithRetry(parent, fake, time.Second, "chromium")
+	if !errors.Is(err, redis.ErrNoAvailableWorkers) {
+		t.Fatalf("expected ErrNoAvailableWorkers, got %v", err)
+	}
+
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Fatalf("expected SelectWorker to be called once, got %d", got)
 	}
 }
 
@@ -577,4 +610,231 @@ func TestMetricsHandlerReportsActiveConnections(t *testing.T) {
 	if metrics.ActiveConnections != 37 {
 		t.Fatalf("expected active connections 37, got %d", metrics.ActiveConnections)
 	}
+}
+
+func TestRunReaperLoopInvokesRedis(t *testing.T) {
+	cfg := newTestConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ticks := make(chan time.Time)
+	stub := &stubReaperClient{
+		returnCounts: []int{0, 2},
+		returnErrs:   []error{errors.New("boom"), nil},
+		callCh:       make(chan struct{}, 2),
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runReaperLoop(ctx, cfg, stub, ticks)
+	}()
+
+	ticks <- time.Now()
+	waitForCall(t, stub.callCh)
+	ticks <- time.Now()
+	waitForCall(t, stub.callCh)
+
+	cancel()
+	wg.Wait()
+
+	if got := stub.callCount(); got != 2 {
+		t.Fatalf("expected 2 reaper calls, got %d", got)
+	}
+}
+
+func TestFaviconHandlerReturnsNoContent(t *testing.T) {
+	mux := newProxyMux(newTestConfig(), &fakeRedisClient{})
+
+	req := httptest.NewRequest("GET", "/favicon.ico", nil)
+	resp := httptest.NewRecorder()
+
+	mux.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusNoContent {
+		t.Fatalf("expected status %d, got %d", http.StatusNoContent, resp.Code)
+	}
+	if resp.Body.Len() != 0 {
+		t.Fatalf("expected empty body, got %q", resp.Body.String())
+	}
+}
+
+func TestRelayStopsOnNormalClosure(t *testing.T) {
+	src := &stubWSConn{
+		addr: fakeAddr("src"),
+		reads: []readResult{{
+			err: &websocket.CloseError{Code: websocket.CloseNormalClosure},
+		}},
+	}
+	dst := &stubWSConn{addr: fakeAddr("dst")}
+
+	relay(src, dst, "client->server")
+
+	if len(dst.writes) != 0 {
+		t.Fatalf("expected no writes, got %d", len(dst.writes))
+	}
+}
+
+func TestRelayStopsOnAbnormalClosure(t *testing.T) {
+	src := &stubWSConn{
+		addr: fakeAddr("src"),
+		reads: []readResult{{
+			err: &websocket.CloseError{Code: websocket.CloseAbnormalClosure},
+		}},
+	}
+	dst := &stubWSConn{addr: fakeAddr("dst")}
+
+	relay(src, dst, "client->server")
+
+	if len(dst.writes) != 0 {
+		t.Fatalf("expected no writes, got %d", len(dst.writes))
+	}
+}
+
+func TestRelayStopsOnNetErrClosed(t *testing.T) {
+	src := &stubWSConn{
+		addr:  fakeAddr("src"),
+		reads: []readResult{{err: net.ErrClosed}},
+	}
+	dst := &stubWSConn{addr: fakeAddr("dst")}
+
+	relay(src, dst, "client->server")
+
+	if len(dst.writes) != 0 {
+		t.Fatalf("expected no writes, got %d", len(dst.writes))
+	}
+}
+
+func TestRelayStopsOnWriteFailure(t *testing.T) {
+	src := &stubWSConn{
+		addr: fakeAddr("src"),
+		reads: []readResult{{
+			messageType: websocket.TextMessage,
+			payload:     []byte("hello"),
+		}},
+	}
+	dst := &stubWSConn{
+		addr:        fakeAddr("dst"),
+		writeErrors: []error{errors.New("boom")},
+	}
+
+	relay(src, dst, "client->server")
+
+	if len(dst.writes) != 1 {
+		t.Fatalf("expected 1 write, got %d", len(dst.writes))
+	}
+	if dst.writes[0].messageType != websocket.TextMessage || string(dst.writes[0].payload) != "hello" {
+		t.Fatalf("unexpected write payload: %#v", dst.writes[0])
+	}
+}
+
+type readResult struct {
+	messageType int
+	payload     []byte
+	err         error
+}
+
+type writeCall struct {
+	messageType int
+	payload     []byte
+}
+
+type stubWSConn struct {
+	mu          sync.Mutex
+	reads       []readResult
+	writeErrors []error
+	writes      []writeCall
+	addr        net.Addr
+}
+
+func (s *stubWSConn) ReadMessage() (int, []byte, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if len(s.reads) == 0 {
+		return 0, nil, io.EOF
+	}
+
+	next := s.reads[0]
+	s.reads = s.reads[1:]
+	if next.err != nil {
+		return 0, nil, next.err
+	}
+	return next.messageType, append([]byte(nil), next.payload...), nil
+}
+
+func (s *stubWSConn) WriteMessage(messageType int, data []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.writes = append(s.writes, writeCall{messageType: messageType, payload: append([]byte(nil), data...)})
+
+	if len(s.writeErrors) == 0 {
+		return nil
+	}
+
+	err := s.writeErrors[0]
+	s.writeErrors = s.writeErrors[1:]
+	return err
+}
+
+func (s *stubWSConn) RemoteAddr() net.Addr {
+	return s.addr
+}
+
+type fakeNetAddr string
+
+func (f fakeNetAddr) Network() string { return "tcp" }
+
+func (f fakeNetAddr) String() string { return string(f) }
+
+func fakeAddr(label string) net.Addr {
+	return fakeNetAddr(label)
+}
+
+func waitForCall(t *testing.T, ch <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-ch:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for call")
+	}
+}
+
+type stubReaperClient struct {
+	mu           sync.Mutex
+	calls        int
+	returnCounts []int
+	returnErrs   []error
+	callCh       chan struct{}
+}
+
+func (s *stubReaperClient) ReapStaleWorkers(ctx context.Context) (int, error) {
+	s.mu.Lock()
+	idx := s.calls
+	s.calls++
+	s.mu.Unlock()
+
+	if s.callCh != nil {
+		s.callCh <- struct{}{}
+	}
+
+	var count int
+	if idx < len(s.returnCounts) {
+		count = s.returnCounts[idx]
+	}
+
+	var err error
+	if idx < len(s.returnErrs) {
+		err = s.returnErrs[idx]
+	}
+
+	return count, err
+}
+
+func (s *stubReaperClient) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
 }

@@ -29,6 +29,12 @@ type redisClient interface {
 	ModifyActiveConnections(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error
 }
 
+type wsConn interface {
+	ReadMessage() (messageType int, p []byte, err error)
+	WriteMessage(messageType int, data []byte) error
+	RemoteAddr() net.Addr
+}
+
 func selectWorkerWithRetry(ctx context.Context, rd redisClient, timeout time.Duration, browserType string) (redis.ServerInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -154,7 +160,7 @@ func proxyHandler(rd redisClient, cfg *config.Config) http.HandlerFunc {
 	}
 }
 
-func relay(src, dst *websocket.Conn, direction string) {
+func relay(src wsConn, dst wsConn, direction string) {
 	srcAddr := src.RemoteAddr()
 	dstAddr := dst.RemoteAddr()
 
