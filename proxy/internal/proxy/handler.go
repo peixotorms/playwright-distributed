@@ -27,12 +27,23 @@ type redisClient interface {
 	SelectWorker(ctx context.Context, browserType string) (redis.ServerInfo, error)
 	TriggerWorkerShutdownIfNeeded(ctx context.Context, serverInfo *redis.ServerInfo)
 	ModifyActiveConnections(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error
+	ModifyLifetimeConnections(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error
 }
 
 type wsConn interface {
 	ReadMessage() (messageType int, p []byte, err error)
 	WriteMessage(messageType int, data []byte) error
 	RemoteAddr() net.Addr
+}
+
+func rollbackWorkerCounters(ctx context.Context, rd redisClient, server *redis.ServerInfo) {
+	if derr := rd.ModifyActiveConnections(ctx, server, -1); derr != nil {
+		logger.Error("Failed to roll back active connections for %s: %v", server.WorkerID(), derr)
+	}
+
+	if derr := rd.ModifyLifetimeConnections(ctx, server, -1); derr != nil {
+		logger.Error("Failed to roll back lifetime connections for %s: %v", server.WorkerID(), derr)
+	}
 }
 
 func selectWorkerWithRetry(ctx context.Context, rd redisClient, timeout time.Duration, browserType string) (redis.ServerInfo, error) {
@@ -117,6 +128,7 @@ func proxyHandler(rd redisClient, cfg *config.Config) http.HandlerFunc {
 		serverConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)
 		if err != nil {
 			logger.Error("Connection from %s rejected. Failed to connect to browser server: %v", r.RemoteAddr, err)
+			rollbackWorkerCounters(r.Context(), rd, &server)
 			httputils.ErrorResponse(w, http.StatusInternalServerError, "Browser server error")
 			return
 		}
@@ -125,6 +137,7 @@ func proxyHandler(rd redisClient, cfg *config.Config) http.HandlerFunc {
 		clientConn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			logger.Error("Failed to upgrade client connection: %v", err)
+			rollbackWorkerCounters(r.Context(), rd, &server)
 			return
 		}
 		defer clientConn.Close()
