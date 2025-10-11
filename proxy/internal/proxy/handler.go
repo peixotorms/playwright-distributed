@@ -122,8 +122,6 @@ func proxyHandler(rd redisClient, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 
-		go rd.TriggerWorkerShutdownIfNeeded(r.Context(), &server)
-
 		backendURL, _ := url.Parse(server.Endpoint)
 		serverConn, _, err := websocket.DefaultDialer.Dial(backendURL.String(), nil)
 		if err != nil {
@@ -141,6 +139,8 @@ func proxyHandler(rd redisClient, cfg *config.Config) http.HandlerFunc {
 			return
 		}
 		defer clientConn.Close()
+
+		go rd.TriggerWorkerShutdownIfNeeded(r.Context(), &server)
 
 		atomic.AddInt64(&activeConnections, 1)
 		logger.Info("New connection from %s", r.RemoteAddr)

@@ -467,10 +467,13 @@ func TestProxyHandler_BackendDialFailure(t *testing.T) {
 		t.Fatalf("expected status %d, got %d", http.StatusInternalServerError, resp.Code)
 	}
 
+	// TriggerWorkerShutdownIfNeeded should NOT be called on backend dial failure
+	// because the connection never succeeded and counters will be rolled back
 	select {
 	case <-shutdownCalled:
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected TriggerWorkerShutdownIfNeeded to be called")
+		t.Fatal("TriggerWorkerShutdownIfNeeded should not be called when backend dial fails")
+	case <-time.After(100 * time.Millisecond):
+		// Expected: shutdown should not be triggered
 	}
 
 	select {
