@@ -23,7 +23,13 @@ const (
 	retryDelay = 500 * time.Millisecond
 )
 
-func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.Duration, browserType string) (redis.ServerInfo, error) {
+type redisClient interface {
+	SelectWorker(ctx context.Context, browserType string) (redis.ServerInfo, error)
+	TriggerWorkerShutdownIfNeeded(ctx context.Context, serverInfo *redis.ServerInfo)
+	ModifyActiveConnections(ctx context.Context, serverInfo *redis.ServerInfo, delta int64) error
+}
+
+func selectWorkerWithRetry(ctx context.Context, rd redisClient, timeout time.Duration, browserType string) (redis.ServerInfo, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -49,7 +55,7 @@ func selectWorkerWithRetry(ctx context.Context, rd *redis.Client, timeout time.D
 	}
 }
 
-func proxyHandler(rd *redis.Client, cfg *config.Config) http.HandlerFunc {
+func proxyHandler(rd redisClient, cfg *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/" {
 			http.NotFound(w, r)
