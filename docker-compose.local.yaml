@@ -13,6 +13,11 @@ services:
       # - REDIS_PASSWORD=yourpassword
       # Optional: Enable TLS for secure connections (managed Redis with public certs)
       # - REDIS_TLS=true
+      # Optional: Server bind address (default: 0.0.0.0 - all interfaces)
+      # - SERVER_HOST=127.0.0.1  # Localhost only (for reverse proxy setups)
+      # - SERVER_HOST=10.0.1.50   # Specific private IP
+      # Optional: Server port (default: 8080)
+      # - SERVER_PORT=9000
       - LOG_LEVEL=info
       - LOG_FORMAT=text
       # Maximum number of concurrent browser sessions allowed

@@ -71,7 +71,7 @@ func StartProxyServer(cfg *config.Config, rd *redis.Client) {
 	mux := newProxyMux(cfg, rd)
 
 	server := &http.Server{
-		Addr:         ":8080",
+		Addr:         fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort),
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -94,6 +94,6 @@ func StartProxyServer(cfg *config.Config, rd *redis.Client) {
 		}
 	}()
 
-	logger.Info("Starting proxy server at 0.0.0.0:8080")
+	logger.Info("Starting proxy server at %s:%d", cfg.ServerHost, cfg.ServerPort)
 	server.ListenAndServe()
 }
