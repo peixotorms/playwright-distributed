@@ -11,6 +11,8 @@ type Config struct {
 	RedisPort             int    `mapstructure:"REDIS_PORT"`
 	RedisPassword         string `mapstructure:"REDIS_PASSWORD"`
 	RedisTLS              bool   `mapstructure:"REDIS_TLS"`
+	ServerHost            string `mapstructure:"SERVER_HOST"`
+	ServerPort            int    `mapstructure:"SERVER_PORT"`
 	MaxConcurrentSessions int    `mapstructure:"MAX_CONCURRENT_SESSIONS"`
 	MaxLifetimeSessions   int    `mapstructure:"MAX_LIFETIME_SESSIONS"`
 	MaxConnectionAttempts int    `mapstructure:"MAX_CONNECTION_ATTEMPTS"`
@@ -27,6 +29,8 @@ func LoadConfig() (*Config, error) {
 	viper.BindEnv("REDIS_PORT")
 	viper.BindEnv("REDIS_PASSWORD")
 	viper.BindEnv("REDIS_TLS")
+	viper.BindEnv("SERVER_HOST")
+	viper.BindEnv("SERVER_PORT")
 	viper.BindEnv("LOG_LEVEL")
 	viper.BindEnv("LOG_FORMAT")
 	viper.BindEnv("MAX_CONCURRENT_SESSIONS")
@@ -39,6 +43,8 @@ func LoadConfig() (*Config, error) {
 
 	viper.SetDefault("REDIS_PASSWORD", "")
 	viper.SetDefault("REDIS_TLS", false)
+	viper.SetDefault("SERVER_HOST", "0.0.0.0")
+	viper.SetDefault("SERVER_PORT", 8080)
 	viper.SetDefault("MAX_CONCURRENT_SESSIONS", 5)
 	viper.SetDefault("MAX_LIFETIME_SESSIONS", 50)
 	viper.SetDefault("MAX_CONNECTION_ATTEMPTS", 3)
