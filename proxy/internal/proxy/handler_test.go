@@ -433,9 +433,11 @@ func TestProxyHandler_SuccessfulConnectionLifecycle(t *testing.T) {
 }
 
 func TestProxyHandler_BackendDialFailure(t *testing.T) {
+	cfg := newTestConfig()
+
 	shutdownCalled := make(chan struct{}, 1)
-	modifyActiveCalls := make(chan int64, 1)
-	modifyLifetimeCalls := make(chan int64, 1)
+	modifyActiveCalls := make(chan int64, cfg.MaxConnectionAttempts)
+	modifyLifetimeCalls := make(chan int64, cfg.MaxConnectionAttempts)
 
 	fake := &fakeRedisClient{
 		selectWorkerFunc: func(ctx context.Context, browserType string) (redis.ServerInfo, error) {
@@ -454,7 +456,7 @@ func TestProxyHandler_BackendDialFailure(t *testing.T) {
 		},
 	}
 
-	handler := proxyHandler(fake, newTestConfig())
+	handler := proxyHandler(fake, cfg)
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.Header.Set("Connection", "Upgrade")
@@ -478,22 +480,43 @@ func TestProxyHandler_BackendDialFailure(t *testing.T) {
 		// Expected: shutdown should not be triggered
 	}
 
+	// Verify we get exactly cfg.MaxConnectionAttempts rollback calls for active connections
+	for i := 0; i < cfg.MaxConnectionAttempts; i++ {
+		select {
+		case delta := <-modifyActiveCalls:
+			if delta != -1 {
+				t.Fatalf("expected ModifyActiveConnections delta -1 on attempt %d, got %d", i+1, delta)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("expected ModifyActiveConnections rollback for attempt %d", i+1)
+		}
+	}
+
+	// Verify we get exactly cfg.MaxConnectionAttempts rollback calls for lifetime connections
+	for i := 0; i < cfg.MaxConnectionAttempts; i++ {
+		select {
+		case delta := <-modifyLifetimeCalls:
+			if delta != -1 {
+				t.Fatalf("expected ModifyLifetimeConnections delta -1 on attempt %d, got %d", i+1, delta)
+			}
+		case <-time.After(2 * time.Second):
+			t.Fatalf("expected ModifyLifetimeConnections rollback for attempt %d", i+1)
+		}
+	}
+
+	// Verify no unexpected extra calls
 	select {
 	case delta := <-modifyActiveCalls:
-		if delta != -1 {
-			t.Fatalf("expected ModifyActiveConnections delta -1, got %d", delta)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected ModifyActiveConnections rollback")
+		t.Fatalf("unexpected extra ModifyActiveConnections call with delta %d", delta)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: no more calls
 	}
 
 	select {
 	case delta := <-modifyLifetimeCalls:
-		if delta != -1 {
-			t.Fatalf("expected ModifyLifetimeConnections delta -1, got %d", delta)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("expected ModifyLifetimeConnections rollback")
+		t.Fatalf("unexpected extra ModifyLifetimeConnections call with delta %d", delta)
+	case <-time.After(100 * time.Millisecond):
+		// Expected: no more calls
 	}
 }
 
